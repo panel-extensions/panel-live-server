@@ -8,8 +8,8 @@
 
 Panel Live Server is a local Panel web server that executes
   Python code snippets and renders the resulting visualizations
-  as live, interactive web pages — enabling AI assistants to
-  display and inspect HoloViz outputs in real time.
+  as live, interactive web pages — enabling humans and AI assistants to
+  display and inspect Python outputs in real time.
 
 ## Features
 
@@ -29,9 +29,26 @@ pip install panel-live-server
 
 ## Usage
 
-```python
-import panel_live_server
+```bash
+ $ pls
+
+ Usage: pls [OPTIONS] COMMAND [ARGS]...
+
+ Panel Live Server - Execute and visualize Python code snippets.
+
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --version  -V        Show version and exit.                                                          │
+│ --help               Show this message and exit.                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────╮
+│ serve   Start the Panel Live Server directly.                                                        │
+│ mcp     Start as an MCP server for AI assistants.                                                    │
+│ status  Check whether the Panel server is running.                                                   │
+│ list    List resources (packages, etc.).                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
+
+You can also use `panel-live-server` but `pls` is shorter, easy to remember and fun to use - pls use it 😄.
 
 ## Development
 

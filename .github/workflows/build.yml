@@ -42,4 +42,4 @@ jobs:
           name: artifact
           path: dist
       - name: Publish package on PyPi
-        uses: pypa/gh-action-pypi-publish@15c56dba361d8335944d31a2ecd17d700fc7bcbc # v1.12.2
+        uses: pypa/gh-action-pypi-publish@106e0b0b7c337fa67ed433972f777c6357f78598 # v1.13.0
