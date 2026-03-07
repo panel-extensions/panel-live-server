@@ -1,17 +1,14 @@
-"""Accessible imports for the panel_live_server package."""
+"""Panel Live Server - Execute and visualize Python code snippets."""
 
 import importlib.metadata
 import warnings
 
-from panel_live_server.main import create_app
-
 try:
-    __version__ = importlib.metadata.version(__name__)
+    __version__ = importlib.metadata.version("panel-live-server")
 except importlib.metadata.PackageNotFoundError as e:  # pragma: no cover
-    warnings.warn(f"Could not determine version of {__name__}\n{e!s}", stacklevel=2)
+    warnings.warn(f"Could not determine version of panel-live-server\n{e!s}", stacklevel=2)
     __version__ = "unknown"
 
 __all__: list[str] = [
     "__version__",
-    "create_app",
 ]

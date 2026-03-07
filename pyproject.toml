@@ -14,10 +14,7 @@ version_scheme = "post-release"
 [project]
 name = "panel-live-server"
 dynamic = ["version"]
-description = 'Panel Live Server is a local Panel web server that executes   
-  Python code snippets and renders the resulting visualizations 
-  as live, interactive web pages — enabling AI assistants to    
-  display and inspect HoloViz outputs in real time.   '
+description = "Panel Live Server is a local Panel web server that executes Python code snippets and renders the resulting visualizations as live, interactive web pages."
 readme = "README.md"
 license = { text = "BSD" }
 requires-python = ">=3.12"
@@ -42,7 +39,16 @@ classifiers = [
 dependencies = [
     "packaging",
     "panel >=1.5.0",
+    "panel-material-ui",
+    "requests",
+    "pydantic >=2.0",
+    "fastmcp >=3.0",
+    "typer",
 ]
+
+[project.scripts]
+pls = "panel_live_server.cli:main"
+panel-live-server = "panel_live_server.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/panel-extensions/panel-live-server"
@@ -57,6 +63,7 @@ dev = [
     "pytest-rerunfailures",
     "pytest-xdist",
     "pytest",
+    "typer",
     "watchfiles",
 ]
 mypy = [
