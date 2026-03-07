@@ -8,7 +8,9 @@ edit_uri = "edit/main/docs/"
 nav = [
   {"Home" = "index.md"},
   {"Tutorials" = [
-    {"Getting Started" = "tutorials/getting-started.md"}
+    {"Installation" = "tutorials/installation.md"},
+    {"Standalone Server" = "tutorials/standalone-server.md"},
+    {"MCP Server" = "tutorials/mcp-server.md"}
   ]},
   {"How-to Guides" = [
     {"Configure the Server" = "how-to/configure-server.md"}

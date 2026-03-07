@@ -10,6 +10,7 @@ postinstall = "pip install --no-build-isolation --no-deps --disable-pip-version-
 python = ">=3.12"
 requests = "*"
 pydantic = ">=2.0"
+ruff = "*"
 typer = "*"
 pip = "*"
 hatchling = "*"
@@ -18,8 +19,13 @@ panel = ">=1.5.0"
 setuptools = ">=61"
 setuptools-scm = "*"
 
+[pypi-dependencies]
+fastmcp = ">=3.0"
+panel-material-ui = "*"
+
 [feature.test.dependencies]
 pytest = ">=6"
+pytest-asyncio = "*"
 pytest-cov = "*"
 mypy = "*"
 [feature.test.tasks]

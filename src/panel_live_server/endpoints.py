@@ -15,6 +15,7 @@ from tornado.web import RequestHandler
 
 from panel_live_server.config import get_config
 from panel_live_server.database import get_db
+from panel_live_server.validation import SecurityError
 
 logger = logging.getLogger(__name__)
 
@@ -90,22 +91,18 @@ class SnippetEndpoint(RequestHandler):
             self.set_header("Content-Type", "application/json")
             self.write(result)
 
+        except SyntaxError as e:
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "SyntaxError", "message": str(e)})
+        except SecurityError as e:
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "SecurityError", "message": str(e)})
         except ValueError as e:
-            # Handle validation errors (empty code)
             self.set_status(400)
             self.set_header("Content-Type", "application/json")
             self.write({"error": "ValueError", "message": str(e)})
-        except SyntaxError as e:
-            # Handle syntax errors
-            self.set_status(400)
-            self.set_header("Content-Type", "application/json")
-            self.write(
-                {
-                    "error": "SyntaxError",
-                    "message": str(e),
-                    "code_snippet": code if "code" in locals() else "",
-                }
-            )
         except Exception as e:
             # Handle all other errors
             logger.exception("Error in /api/snippet endpoint")

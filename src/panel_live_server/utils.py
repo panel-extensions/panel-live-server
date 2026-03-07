@@ -1,11 +1,17 @@
 """Utilities for inferring required packages and Panel extensions from code."""
 
 import ast
+import concurrent.futures
 import importlib.util
+import logging
 import sys
 import traceback
 import types
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_EXECUTION_TIMEOUT = 30  # seconds
 
 # Check for pandas availability once at module level
 _PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
@@ -330,9 +336,22 @@ def get_relative_view_url(id: str) -> str:
     return f"./view?id={id}"
 
 
+def _run_execution(code: str) -> str:
+    """Execute *code* in an isolated module namespace. Returns error string or ``""``."""
+    try:
+        execute_in_module(code, module_name="_code_validation", cleanup=True)
+        return ""
+    except Exception as e:
+        tb = e.__traceback__.tb_next if e.__traceback__ is not None else None
+        return "".join(traceback.format_exception(type(e), e, tb)).strip()
+
+
 def validate_code(code: str) -> str:
-    """
-    Validate Python code by attempting to execute it.
+    """Execute *code* in a thread with a timeout to catch runtime errors.
+
+    Runs code in a separate thread so the caller is not blocked indefinitely
+    by long-running or hanging code. The thread is a daemon — on timeout it
+    continues running until the process exits (threads cannot be forcibly killed).
 
     Parameters
     ----------
@@ -342,22 +361,15 @@ def validate_code(code: str) -> str:
     Returns
     -------
     str
-        An empty string if the code is valid, otherwise the traceback of the error.
+        Empty string if the code runs without error, otherwise the traceback
+        or a timeout message.
     """
-    try:
-        validate_extension_availability(code)
-    except ExtensionError as e:
-        return str(e)
-
-    try:
-        execute_in_module(code, module_name="_code_validation", cleanup=True)
-    except Exception as e:
-        # Get the traceback but skip the outermost frame (the exec call itself)
-        if e.__traceback__ is not None:
-            tb = e.__traceback__.tb_next  # Skip the exec() frame
-        else:
-            tb = None
-        traceback_str = "".join(traceback.format_exception(type(e), e, tb))
-        traceback_str = traceback_str.strip()
-        return traceback_str
-    return ""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_run_execution, code)
+        try:
+            return future.result(timeout=_EXECUTION_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            logger.warning("Code execution timed out after %ss", _EXECUTION_TIMEOUT)
+            return f"Code execution timed out after {_EXECUTION_TIMEOUT}s."
+        except Exception as e:
+            return f"Execution failed: {e}"
