@@ -7,8 +7,21 @@ repo_name = "panel-extensions/panel-live-server"
 edit_uri = "edit/main/docs/"
 nav = [
   {"Home" = "index.md"},
-  {"Examples" = "examples.md"},
-  {"Reference" = "reference/panel_live_server.md"}
+  {"Tutorials" = [
+    {"Installation" = "tutorials/installation.md"},
+    {"Standalone Server" = "tutorials/standalone-server.md"},
+    {"MCP Server" = "tutorials/mcp-server.md"}
+  ]},
+  {"How-to Guides" = [
+    {"Configure the Server" = "how-to/configure-server.md"}
+  ]},
+  {"Explanation" = [
+    {"Architecture" = "explanation/architecture.md"}
+  ]},
+  {"Reference" = [
+    {"API Reference" = "reference/panel_live_server.md"},
+    {"Examples" = "examples.md"}
+  ]}
 ]
 
 # Theme configuration

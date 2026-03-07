@@ -22,6 +22,8 @@ from fastmcp.server.apps import ResourceCSP
 from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
+from panel_live_server.utils import ExtensionError
+from panel_live_server.validation import SecurityError
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +303,42 @@ async def show(
         payload["status"] = "success"
         payload["message"] = "Visualization created successfully."
         return json.dumps(payload)
+
+    except SyntaxError as e:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Syntax error: {e}",
+                "recovery": "Fix the syntax error and try again.",
+            }
+        )
+
+    except SecurityError as e:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Security violation:\n{e}",
+                "recovery": "Rewrite the code without the flagged pattern.",
+            }
+        )
+
+    except ExtensionError as e:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": str(e),
+                "recovery": "Add the missing pn.extension(...) call to your code.",
+            }
+        )
+
+    except ValueError as e:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": str(e),
+                "recovery": "Use the list_packages tool to check what is available, then adjust your code.",
+            }
+        )
 
     except Exception as e:
         logger.exception(f"Error creating visualization: {e}")

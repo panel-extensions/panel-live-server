@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "panel-live-server"
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "osx-64", "linux-64", "win-64"]
@@ -10,19 +10,22 @@ postinstall = "pip install --no-build-isolation --no-deps --disable-pip-version-
 python = ">=3.12"
 requests = "*"
 pydantic = ">=2.0"
+ruff = "*"
 typer = "*"
-
-[host-dependencies]
 pip = "*"
 hatchling = "*"
 hatch-vcs = "*"
 panel = ">=1.5.0"
 setuptools = ">=61"
 setuptools-scm = "*"
-pydantic = ">=2.0"
+
+[pypi-dependencies]
+fastmcp = ">=3.0"
+panel-material-ui = "*"
 
 [feature.test.dependencies]
 pytest = ">=6"
+pytest-asyncio = "*"
 pytest-cov = "*"
 mypy = "*"
 [feature.test.tasks]

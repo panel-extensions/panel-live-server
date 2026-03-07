@@ -4,7 +4,6 @@ This module handles SQLite database operations for storing and retrieving
 visualization requests.
 """
 
-import ast
 import json
 import logging
 import os
@@ -27,6 +26,11 @@ from panel_live_server.config import get_config
 from panel_live_server.utils import find_extensions
 from panel_live_server.utils import find_requirements
 from panel_live_server.utils import validate_code
+from panel_live_server.utils import validate_extension_availability
+from panel_live_server.validation import ast_check
+from panel_live_server.validation import check_packages
+from panel_live_server.validation import ruff_check
+from panel_live_server.validation import ruff_format
 
 logger = logging.getLogger(__name__)
 
@@ -476,17 +480,30 @@ class SnippetDatabase:
         # Validate app is not empty
         if not app:
             raise ValueError("App code is required")
-        if ".show(" in app:
-            raise ValueError("`.show()` calls are not supported in this environment")
 
         supported_methods = {"jupyter", "panel", "pyodide"}
         if method not in supported_methods:
             supported_text = ", ".join(sorted(supported_methods))
             raise ValueError(f"Unsupported execution method '{method}'. Supported methods: {supported_text}")
 
-        # Validate syntax
-        ast.parse(app)  # Raises SyntaxError if invalid
+        # Layer 1 — Syntax
+        if err := ast_check(app):
+            raise SyntaxError(err)
 
+        # Layer 2 — Security (raises SecurityError)
+        ruff_check(app)
+
+        # Layer 3 — Package availability
+        if err := check_packages(app):
+            raise ValueError(err)
+
+        # Layer 4 — Panel extension availability (raises ExtensionError)
+        validate_extension_availability(app)
+
+        # Format before storage and runtime execution
+        app = ruff_format(app)
+
+        # Layer 5 — Runtime execution (threaded, stores error but does not block)
         validation_result = validate_code(app)
 
         # Infer requirements and extensions

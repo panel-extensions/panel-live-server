@@ -75,7 +75,7 @@
         background: rgba(184, 92, 0, 0.1);
       }
 
-      button {
+      button, a[role="button"] {
         border: 1px solid rgba(120, 120, 120, 0.4);
         border-radius: 6px;
         padding: 3px 8px;
@@ -85,13 +85,17 @@
         font-size: 0.78rem;
         white-space: nowrap;
         flex-shrink: 0;
+        text-decoration: none;
+        display: inline-block;
+        line-height: normal;
+        font-family: inherit;
       }
 
-      button:hover {
+      button:hover, a[role="button"]:not([aria-disabled="true"]):hover {
         background: rgba(120, 120, 120, 0.12);
       }
 
-      button:disabled {
+      button:disabled, a[role="button"][aria-disabled="true"] {
         opacity: 0.35;
         cursor: default;
       }
@@ -169,7 +173,7 @@
   <body>
     <div class="layout">
       <div class="toolbar">
-        <button id="copy-link" type="button">Copy URL</button>
+        <button id="share-url" type="button" disabled>Share URL</button>
         <button id="copy-code" type="button" disabled>Copy Code</button>
         <div class="toolbar-sep"></div>
         <p id="message" class="message">Awaiting tool result…</p>
@@ -195,7 +199,7 @@
       const iframe = document.getElementById("view");
       const loadingOverlay = document.getElementById("loading-overlay");
       const copyCodeButton = document.getElementById("copy-code");
-      const copyLinkButton = document.getElementById("copy-link");
+      const shareUrlButton  = document.getElementById("share-url");
       const zoomButtons = [
         { btn: document.getElementById("zoom-100"), scale: 1    },
         { btn: document.getElementById("zoom-75"),  scale: 0.75 },
@@ -285,15 +289,15 @@
         }, 1500);
       }
 
+      shareUrlButton.addEventListener("click", async () => {
+        if (!currentUrl) return;
+        const ok = await copyToClipboard(currentUrl);
+        if (ok) flashCopied(shareUrlButton);
+      });
+
       copyCodeButton.addEventListener("click", async () => {
         const ok = await copyToClipboard(currentCode || "No code available.");
         if (ok) flashCopied(copyCodeButton);
-      });
-
-      copyLinkButton.addEventListener("click", async () => {
-        if (!currentUrl) return;
-        const ok = await copyToClipboard(currentUrl);
-        if (ok) flashCopied(copyLinkButton);
       });
 
       const app = new App({ name: "panel-live-server-show", version: "0.1.0" });
@@ -328,8 +332,9 @@
             document.title = `Panel Live Server · ${parsedPayload.name}`;
           }
 
-          // Enable Copy Code button now that we have a result
+          // Enable action buttons now that we have a result
           copyCodeButton.disabled = !currentCode;
+          shareUrlButton.disabled = !currentUrl;
 
           // Apply zoom from payload
           const zoomVal = parsedPayload.zoom;
