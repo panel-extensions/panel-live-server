@@ -5,9 +5,6 @@ startup, health checks, and shutdown.
 """
 
 import logging
-import os
-import signal
-import socket
 import subprocess
 import sys
 import time
@@ -15,8 +12,6 @@ from pathlib import Path
 from typing import Optional
 
 import requests  # type: ignore[import-untyped]
-
-from panel_live_server.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +48,8 @@ class PanelServerManager:
 
     def _is_port_in_use(self) -> bool:
         """Check if the configured port is already in use."""
+        import socket
+
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
                 s.bind((self.host, self.port))
@@ -76,25 +73,26 @@ class PanelServerManager:
         try:
             response = requests.get(f"http://{self.host}:{self.port}/api/health", timeout=3)
             if response.status_code == 200:
-                logger.info(f"Found healthy display server already running on port {self.port}")
+                logger.info(f"Found healthy Panel server already running on port {self.port}")
                 return True
         except requests.RequestException:
             pass
 
-        # Port is occupied but server is unresponsive (zombie) — try to find and kill it
+        # Port is occupied but server is unresponsive — try to find and kill it
         logger.warning(f"Port {self.port} is occupied by an unresponsive process, attempting cleanup")
         stale_pid = self._find_pid_on_port()
         if stale_pid:
-            logger.info(f"Killing stale display server process (PID {stale_pid})")
+            import os
+            import signal
+
+            logger.info(f"Killing stale Panel server process (PID {stale_pid})")
             try:
                 os.kill(stale_pid, signal.SIGTERM)
-                # Give it a moment to release the port
                 for _ in range(10):
                     time.sleep(0.5)
                     if not self._is_port_in_use():
                         logger.info(f"Stale process (PID {stale_pid}) cleaned up successfully")
                         return False
-                # Still alive, force kill
                 os.kill(stale_pid, signal.SIGKILL)
                 time.sleep(1)
             except ProcessLookupError:
@@ -112,42 +110,15 @@ class PanelServerManager:
     def _find_pid_on_port(self) -> int | None:
         """Find the PID of a process listening on the configured port.
 
-        Parses /proc/net/tcp on Linux to find the process.
+        Uses psutil for cross-platform compatibility.
         """
-        port_hex = f"{self.port:04X}"
         try:
-            with open("/proc/net/tcp") as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if len(parts) > 9 and parts[3] == "0A":  # LISTEN state
-                        local = parts[1]
-                        if local.split(":")[1].upper() == port_hex:
-                            inode = int(parts[9])
-                            return self._inode_to_pid(inode)
-        except (FileNotFoundError, PermissionError):
-            pass
-        return None
+            import psutil
 
-    def _inode_to_pid(self, target_inode: int) -> int | None:
-        """Find the PID that owns a given socket inode."""
-        if target_inode == 0:
-            return None
-        try:
-            for entry in os.listdir("/proc"):
-                if not entry.isdigit():
-                    continue
-                fd_dir = f"/proc/{entry}/fd"
-                try:
-                    for fd in os.listdir(fd_dir):
-                        try:
-                            link = os.readlink(f"{fd_dir}/{fd}")
-                            if f"socket:[{target_inode}]" in link:
-                                return int(entry)
-                        except (OSError, ValueError):
-                            continue
-                except PermissionError:
-                    continue
-        except (FileNotFoundError, PermissionError):
+            for conn in psutil.net_connections(kind="tcp"):
+                if conn.laddr.port == self.port and conn.status == psutil.CONN_LISTEN:
+                    return conn.pid
+        except (ImportError, psutil.AccessDenied):
             pass
         return None
 
@@ -170,20 +141,22 @@ class PanelServerManager:
                 return True
             # Stale server was cleaned up or port was freed, continue with startup
             if self._is_port_in_use():
-                logger.error(f"Port {self.port} is still in use, cannot start display server")
+                logger.error(f"Port {self.port} is still in use, cannot start Panel server")
                 return False
 
         try:
             # Get path to app.py
             app_path = Path(__file__).parent / "app.py"
 
-            # Set up environment
-            env = os.environ.copy()
-            env["DISPLAY_DB_PATH"] = str(self.db_path)
-            env["PANEL_SERVER_PORT"] = str(self.port)
-            env["PANEL_SERVER_HOST"] = self.host
+            # Set up environment — use PANEL_LIVE_SERVER_* vars to match get_config()
+            import os
 
-            logger.info(f"Using database at: {env['DISPLAY_DB_PATH']}")
+            env = os.environ.copy()
+            env["PANEL_LIVE_SERVER_DB_PATH"] = str(self.db_path)
+            env["PANEL_LIVE_SERVER_PORT"] = str(self.port)
+            env["PANEL_LIVE_SERVER_HOST"] = self.host
+
+            logger.info(f"Using database at: {env['PANEL_LIVE_SERVER_DB_PATH']}")
 
             # Start subprocess
             logger.info(f"Starting Panel server on {self.host}:{self.port}")
@@ -201,7 +174,7 @@ class PanelServerManager:
                 self.restart_count = 0
                 return True
             else:
-                logger.error("Panel server failed to start (health check failed)")
+                logger.error("Panel server failed to start (health check timed out)")
                 self.stop()
                 return False
 
@@ -228,13 +201,12 @@ class PanelServerManager:
         base_url = f"http://{self.host}:{self.port}"
 
         while time.time() - start_time < timeout:
-            # Try to connect to health endpoint
             try:
                 response = requests.get(f"{base_url}/api/health", timeout=2)
                 if response.status_code == 200:
                     return True
             except requests.RequestException:
-                pass  # The panel server has not started yet
+                pass  # Server not ready yet
 
             # Check if process died
             if self.process and self.process.poll() is not None:
@@ -278,7 +250,6 @@ class PanelServerManager:
             logger.info("Stopping Panel server")
             self.process.terminate()
 
-            # Wait for graceful shutdown
             try:
                 self.process.wait(timeout=timeout)
                 logger.info("Panel server stopped gracefully")

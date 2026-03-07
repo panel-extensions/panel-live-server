@@ -8,6 +8,7 @@ import atexit
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -103,7 +104,11 @@ async def app_lifespan(app):
 
     if _manager:
         atexit.register(_cleanup)
-        logger.info("Panel Live Server started successfully")
+        config = get_config()
+        feed_url = _externalize_url(f"http://{config.host}:{config.port}/feed")
+        # Print to stderr so it's visible even in stdio MCP mode
+        print(f"\n  Panel Live Server is running.\n  Feed: {feed_url}\n", file=sys.stderr, flush=True)
+        logger.info(f"Panel Live Server started — feed: {feed_url}")
     else:
         logger.warning("Panel Live Server failed to start - show tool will not work")
 
@@ -160,43 +165,46 @@ async def show(
     method: Literal["jupyter", "panel"] = "jupyter",
     ctx: Context | None = None,
 ) -> str:
-    """Display Python code visualization in a browser.
+    """Display Python code as a live, interactive visualization.
 
-    This tool executes Python code and renders it in a Panel web interface,
-    returning a URL where you can view the output. The code is validated
-    before execution and any errors are reported immediately.
+    Executes Python code and renders the result in a Panel web interface.
+    Always call this tool when the user asks to show, display, plot, or visualize anything.
 
-    Use this tool whenever the user asks to show, display, visualize data, plots, dashboards, and other Python objects.
+    IMPORTANT — always provide a short `name` (e.g. "Temperature chart") so the
+    visualization can be identified in the feed. The `description` is optional but helpful.
 
     Parameters
     ----------
     code : str
-        The Python code to execute. For "jupyter" method, the last line is displayed.
-        For "panel" method, objects marked .servable() are displayed.
+        Python code to execute.
+        For "jupyter" method: the LAST expression is displayed. It must be at column 0
+        (fully dedented — no leading whitespace or indentation).
+        For "panel" method: call .servable() on the objects you want displayed.
     name : str, optional
-        A name for the visualization (displayed in admin/feed views)
+        Short descriptive name shown in the visualization feed (e.g. "Sales chart 2024").
+        Always provide this — unnamed visualizations are hard to track.
     description : str, optional
-        A short description of the visualization
+        One-sentence description of what the visualization shows.
     method : {"jupyter", "panel"}, default "jupyter"
         Execution mode:
-        - "jupyter": Execute code and display the last expression's result.
-            The last expression must be fully dedented (i.e. at column 0, no leading whitespace).
-            DO use this for standard data visualizations like plots, dataframes, etc. that do not import and use Panel directly.
-        - "panel": Execute code and display Panel objects marked .servable()
-            DO use this for code that imports and uses Panel to create dashboards, apps, and complex layouts.
+        - "jupyter": displays the last expression's result. Use for standard plots,
+          dataframes, and objects that do NOT import panel directly.
+        - "panel": displays objects marked `.servable()`. Use when the code imports
+          and uses Panel to build dashboards, apps, or complex layouts.
 
     Returns
     -------
     str
-        JSON payload as text for MCP App rendering, including a visualization URL.
+        JSON payload for MCP App rendering, including the visualization URL.
     """
     global _manager, _client
 
     if not _client:
+        config = get_config()
         return json.dumps({
             "status": "error",
             "message": "Panel Live Server is not running. Check logs for startup errors.",
-            "recovery": "Try restarting the MCP server. Check that port 5077 is available.",
+            "recovery": f"Restart the MCP server. Ensure port {config.port} is not already in use.",
         })
 
     # Check health with restart logic
@@ -208,10 +216,11 @@ async def show(
             _client.close()
             _client = DisplayClient(base_url=_manager.get_base_url())
         else:
+            config = get_config()
             return json.dumps({
                 "status": "error",
                 "message": "Panel Live Server is not healthy and failed to restart.",
-                "recovery": "Kill any process on port 5077 and restart the MCP server.",
+                "recovery": f"Kill any process on port {config.port} and restart the MCP server.",
             })
 
     # Send request to Panel server

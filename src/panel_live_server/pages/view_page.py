@@ -115,7 +115,7 @@ def _execute_code(snippet: Snippet) -> pn.viewable.Viewable | None:
     pn.viewable.Viewable
         Panel component with result
     """
-    module_name = f"holoviz_snippet_{snippet.id.replace('-', '_')}"
+    module_name = f"pls_snippet_{snippet.id.replace('-', '_')}"
 
     # We need to reset the material design
     app: str = (

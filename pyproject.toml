@@ -40,6 +40,7 @@ dependencies = [
     "packaging",
     "panel >=1.5.0",
     "panel-material-ui",
+    "psutil",
     "requests",
     "pydantic >=2.0",
     "fastmcp >=3.0",

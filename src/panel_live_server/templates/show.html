@@ -19,8 +19,8 @@
         display: grid;
         grid-template-rows: auto auto 1fr;
         min-height: 100vh;
-        gap: 12px;
-        padding: 12px;
+        gap: 10px;
+        padding: 10px 12px 12px;
         box-sizing: border-box;
       }
 
@@ -28,33 +28,89 @@
         display: flex;
         gap: 8px;
         align-items: center;
+        flex-wrap: wrap;
       }
 
       button,
       a.button {
         border: 1px solid rgba(120, 120, 120, 0.4);
         border-radius: 8px;
-        padding: 6px 10px;
+        padding: 5px 10px;
         background: transparent;
         color: inherit;
         text-decoration: none;
         cursor: pointer;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
+      }
+
+      button:hover,
+      a.button:hover {
+        background: rgba(120, 120, 120, 0.12);
       }
 
       .message {
         margin: 0;
+        font-size: 0.9rem;
         white-space: pre-wrap;
         opacity: 0.9;
+        line-height: 1.4;
+      }
+
+      .message a {
+        color: inherit;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      .message.status-error   { color: #e05252; }
+      .message.status-warning { color: #d4860a; }
+      .message.status-success { color: inherit; }
+
+      .iframe-wrapper {
+        position: relative;
+        width: 100%;
+        height: calc(100vh - 110px);
+        min-height: 360px;
       }
 
       iframe {
         width: 100%;
-        height: calc(100vh - 180px);
-        min-height: 420px;
+        height: 100%;
         border: 1px solid rgba(120, 120, 120, 0.4);
         border-radius: 8px;
         background: white;
+        display: block;
+      }
+
+      /* Loading overlay */
+      .loading-overlay {
+        position: absolute;
+        inset: 0;
+        border-radius: 8px;
+        background: rgba(128, 128, 128, 0.08);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        font-size: 0.85rem;
+        opacity: 0.7;
+        pointer-events: none;
+      }
+
+      .loading-overlay.hidden { display: none; }
+
+      .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid rgba(120, 120, 120, 0.3);
+        border-top-color: rgba(120, 120, 120, 0.8);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        flex-shrink: 0;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
       }
     </style>
   </head>
@@ -63,35 +119,45 @@
       <div class="actions">
         <button id="copy-code" type="button">Copy Code</button>
         <button id="copy-link" type="button">Copy URL</button>
+        <a id="open-link" class="button" href="#" target="_blank" rel="noopener" style="display:none">Open ↗</a>
       </div>
       <p id="message" class="message">Awaiting tool result…</p>
-      <iframe id="view" src="about:blank" title="show preview"></iframe>
+      <div class="iframe-wrapper">
+        <div id="loading-overlay" class="loading-overlay">
+          <div class="spinner"></div>
+          <span>Loading visualization…</span>
+        </div>
+        <iframe id="view" src="about:blank" title="show preview"></iframe>
+      </div>
     </div>
 
     <script type="module">
       import { App } from "https://unpkg.com/@modelcontextprotocol/ext-apps@0.4.0/app-with-deps";
 
-      const message = document.getElementById("message");
+      const messageEl = document.getElementById("message");
       const iframe = document.getElementById("view");
+      const loadingOverlay = document.getElementById("loading-overlay");
       const copyCodeButton = document.getElementById("copy-code");
-      const copyButton = document.getElementById("copy-link");
+      const copyLinkButton = document.getElementById("copy-link");
+      const openLink = document.getElementById("open-link");
 
-      const urlRegex = /(https?:\/\/[^\s)]+)/i;
       let currentUrl = "";
       let currentCode = "";
 
-      copyCodeButton.addEventListener("click", async () => {
-        if (!navigator.clipboard) {
-          return;
+      // Show loading overlay when iframe starts loading a real URL
+      iframe.addEventListener("load", () => {
+        if (iframe.src && iframe.src !== "about:blank") {
+          loadingOverlay.classList.add("hidden");
         }
+      });
 
+      copyCodeButton.addEventListener("click", async () => {
+        if (!navigator.clipboard) return;
         await navigator.clipboard.writeText(currentCode || "No code available.");
       });
 
-      copyButton.addEventListener("click", async () => {
-        if (!currentUrl || !navigator.clipboard) {
-          return;
-        }
+      copyLinkButton.addEventListener("click", async () => {
+        if (!currentUrl || !navigator.clipboard) return;
         await navigator.clipboard.writeText(currentUrl);
       });
 
@@ -108,22 +174,55 @@
           parsedPayload = null;
         }
 
+        // Reset status classes
+        messageEl.className = "message";
+
         if (parsedPayload && typeof parsedPayload === "object") {
+          const status = parsedPayload.status || "success";
           const baseMessage = parsedPayload.message || "Tool result received.";
           const extraError = parsedPayload.error_message ? `\n\n${parsedPayload.error_message}` : "";
-          message.textContent = `${baseMessage}${extraError}`;
+          const recovery = parsedPayload.recovery ? `\n\n${parsedPayload.recovery}` : "";
+
+          messageEl.classList.add(`status-${status}`);
           currentUrl = typeof parsedPayload.url === "string" ? parsedPayload.url : "";
           currentCode = typeof parsedPayload.code === "string" ? parsedPayload.code : "";
+
+          // Build message with optional clickable URL
+          if (currentUrl) {
+            messageEl.innerHTML = "";
+            const textNode = document.createTextNode(`${baseMessage}${extraError}${recovery} `);
+            messageEl.appendChild(textNode);
+            const link = document.createElement("a");
+            link.href = currentUrl;
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.textContent = "Open ↗";
+            messageEl.appendChild(link);
+          } else {
+            messageEl.textContent = `${baseMessage}${extraError}${recovery}`;
+          }
         } else {
-          message.textContent = rawText;
+          messageEl.textContent = rawText;
+          const urlRegex = /(https?:\/\/[^\s)]+)/i;
           const match = rawText.match(urlRegex);
           currentUrl = match ? match[1] : "";
           currentCode = "";
         }
 
+        // Update Open button visibility
         if (currentUrl) {
+          openLink.href = currentUrl;
+          openLink.style.display = "";
+        } else {
+          openLink.style.display = "none";
+        }
+
+        // Load iframe (show loading overlay)
+        if (currentUrl) {
+          loadingOverlay.classList.remove("hidden");
           iframe.src = currentUrl;
         } else {
+          loadingOverlay.classList.add("hidden");
           iframe.src = "about:blank";
         }
       };

@@ -68,10 +68,10 @@ def feed_page():
         title = f"""\
 **{req.name or req.id}** ({created_at})\n\n{req.description}\n
 """
-        iframe = f"""<div style="resize: vertical; overflow: hidden; height: calc(75vh - 300px); width: 100%; max-width: 100%; border: 1px solid gray;">
+        iframe = f"""<div style="resize: vertical; overflow: hidden; height: max(calc(75vh - 300px), 300px); min-height: 300px; width: 100%; max-width: 100%; border: 1px solid gray;">
 <iframe
     src="{url}"
-    style="height: 100%; width: 100%; border: none;zoom:0.80"
+    style="height: 100%; width: 100%; border: none;"
     frameborder="0"
     allow="fullscreen; clipboard-write; autoplay"
 ></iframe>
@@ -142,13 +142,18 @@ def feed_page():
 
     def update_chat(*events):
         """Update chat feed with latest visualizations."""
-        requests = get_db().list_snippets(limit=limit.value)
+        snippets = get_db().list_snippets(limit=limit.value)
 
-        # Clear and repopulate
+        # Only rebuild if the set of IDs changed (avoids flicker on unchanged feeds)
+        new_ids = [s.id for s in reversed(snippets)]
+        current_ids = [getattr(obj, "_snippet_id", None) for obj in chat_feed.objects]
+        if new_ids == current_ids:
+            return
+
         objects: list[pn.viewable.Viewable] = []
-
-        for req in reversed(requests):  # Show oldest first
+        for req in reversed(snippets):  # Show newest first
             message = get_view(req)
+            message._snippet_id = req.id  # type: ignore[attr-defined]
             objects.insert(0, message)
 
         chat_feed[:] = objects
@@ -156,7 +161,7 @@ def feed_page():
 
     # Initial update
     update_chat()
-    pn.state.add_periodic_callback(update_chat, 1000)  # Refresh every 1 seconds
+    pn.state.add_periodic_callback(update_chat, 3000)  # Refresh every 3 seconds
 
     # About button and dialog
     about_button = pmui.IconButton(

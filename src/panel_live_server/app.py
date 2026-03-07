@@ -7,72 +7,35 @@ and displays the results through various endpoints.
 import logging
 import os
 
-from panel_live_server.config import get_config
-from panel_live_server.database import get_db
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
-from panel_live_server.pages import add_page
-from panel_live_server.pages import admin_page
-from panel_live_server.pages import feed_page
-from panel_live_server.pages import view_page
 
 logger = logging.getLogger(__name__)
 
-# Default port for the Panel server
-
-config = get_config()
-
-DEFAULT_PORT = config.port
-DEFAULT_ADDRESS = config.host
-
 
 def _display_url(address: str, port: int, endpoint: str) -> str:
-    """Generate the display server URL.
-
-    Parameters
-    ----------
-    address : str
-        Host address
-    port : int
-        Port number
-    endpoint : str
-        Endpoint path
-
-    Returns
-    -------
-    str
-        Display server URL
-    """
+    """Generate the display server URL."""
     proxy_url = os.getenv("JUPYTER_SERVER_PROXY_URL", None)
-    if proxy_url and address == DEFAULT_ADDRESS:
+    if proxy_url:
         proxy_url = proxy_url.rstrip("/")
         return f"{proxy_url}/{port}/{endpoint}"
     return f"http://{address}:{port}/{endpoint}"
 
 
 def _api_url(address: str, port: int, endpoint: str) -> str:
-    """Generate the API URL for a given endpoint.
-
-    Parameters
-    ----------
-    address : str
-        Host address
-    port : int
-        Port number
-    endpoint : str
-        API endpoint path
-
-    Returns
-    -------
-    str
-        Full API URL
-    """
+    """Generate the API URL for a given endpoint."""
     return f"http://{address}:{port}{endpoint}"
 
 
-def main(address: str = DEFAULT_ADDRESS, port: int = DEFAULT_PORT, show: bool = True) -> None:
+def main(address: str = "localhost", port: int = 5077, show: bool = True) -> None:
     """Start the Panel server."""
     import panel as pn
+
+    from panel_live_server.database import get_db
+    from panel_live_server.pages import add_page
+    from panel_live_server.pages import admin_page
+    from panel_live_server.pages import feed_page
+    from panel_live_server.pages import view_page
 
     # Initialize the database
     _ = get_db()
@@ -100,13 +63,10 @@ def main(address: str = DEFAULT_ADDRESS, port: int = DEFAULT_PORT, show: bool = 
 
     # Log startup information
     logger.info(f"Starting Panel Live Server at http://{address}:{port}")
-    logger.info("Available pages:")
-    logger.info(f"  - Feed: { _display_url(address, port, 'feed') }")
-    logger.info(f"  - Add: { _display_url(address, port, 'add') }")
-    logger.info(f"  - Admin: { _display_url(address, port, 'admin') }")
-    logger.info("API endpoints:")
-    logger.info(f"  - Create snippet: POST { _api_url(address, port, '/api/snippet') }")
-    logger.info(f"  - Health check: GET { _api_url(address, port, '/api/health') }")
+    logger.info(f"  Feed:   {_display_url(address, port, 'feed')}")
+    logger.info(f"  Add:    {_display_url(address, port, 'add')}")
+    logger.info(f"  Admin:  {_display_url(address, port, 'admin')}")
+    logger.info(f"  Health: {_api_url(address, port, '/api/health')}")
 
     # Start server
     pn.serve(
@@ -120,4 +80,10 @@ def main(address: str = DEFAULT_ADDRESS, port: int = DEFAULT_PORT, show: bool = 
 
 
 if __name__ == "__main__":
-    main(show=False)
+    # Read config from env vars when run as subprocess
+    from panel_live_server.config import get_config
+    from panel_live_server.config import reset_config
+
+    reset_config()
+    config = get_config()
+    main(address=config.host, port=config.port, show=False)

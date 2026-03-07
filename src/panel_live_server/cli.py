@@ -6,7 +6,6 @@ from typing import Annotated
 import typer
 
 from panel_live_server import __version__
-from panel_live_server.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ def serve(
         5077,
         "--port",
         "-p",
-        help="Port number to run the server on.",
+        help="Port number to run the Panel server on.",
         envvar="PANEL_LIVE_SERVER_PORT",
         show_default=True,
     ),
@@ -65,7 +64,7 @@ def serve(
     show: bool = typer.Option(
         False,
         "--show",
-        help="Open the server in a browser.",
+        help="Open the server in a browser after starting.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -77,7 +76,12 @@ def serve(
     """Start the Panel Live Server directly.
 
     The server provides a web interface for executing Python code snippets
-    and visualizing the results.
+    and visualizing the results. Visit http://<host>:<port>/feed to see
+    visualizations as they are created.
+
+    Note: if you are also running `pls mcp`, both commands use the same Panel
+    server port (PANEL_LIVE_SERVER_PORT). Run only one at a time unless you
+    configure different ports.
     """
     import os
 
@@ -86,8 +90,16 @@ def serve(
     else:
         logging.basicConfig(level=logging.INFO)
 
+    # Set env vars before config is loaded so get_config() picks them up
+    os.environ["PANEL_LIVE_SERVER_PORT"] = str(port)
+    os.environ["PANEL_LIVE_SERVER_HOST"] = host
     if db_path:
         os.environ["PANEL_LIVE_SERVER_DB_PATH"] = db_path
+
+    # Reset the cached config singleton so it re-reads the env vars we just set
+    from panel_live_server.config import reset_config
+
+    reset_config()
 
     from panel_live_server.app import main as app_main
 
@@ -106,14 +118,14 @@ def mcp(
     host: str = typer.Option(
         "127.0.0.1",
         "--host",
-        help="Host for HTTP transport.",
+        help="Host for HTTP/SSE transport.",
         envvar="PANEL_LIVE_SERVER_MCP_HOST",
     ),
     port: int = typer.Option(
         8001,
         "--port",
         "-p",
-        help="Port for HTTP transport.",
+        help="Port for HTTP/SSE transport.",
         envvar="PANEL_LIVE_SERVER_MCP_PORT",
     ),
     verbose: bool = typer.Option(
@@ -125,8 +137,13 @@ def mcp(
 ) -> None:
     """Start as an MCP server for AI assistants.
 
-    The MCP server provides the `show` tool for executing and displaying
-    Python visualizations. The Panel server subprocess starts automatically.
+    The MCP server exposes the `show` tool for executing and displaying
+    Python visualizations. A Panel visualization server starts automatically
+    on port 5077 (PANEL_LIVE_SERVER_PORT) — visit that address in a browser
+    to watch visualizations appear in real time.
+
+    Note: the --port flag here controls the MCP HTTP/SSE listener, NOT the
+    Panel visualization server port. For stdio transport, --port is unused.
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
@@ -142,7 +159,7 @@ def mcp(
     elif transport == "sse":
         mcp_server.run(transport="sse", host=host, port=port)
     else:
-        typer.echo(f"Unknown transport: {transport}. Use stdio, http, or sse.")
+        typer.echo(f"Unknown transport: {transport!r}. Choose from: stdio, http, sse.")
         raise typer.Exit(1)
 
 
