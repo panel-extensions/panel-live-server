@@ -3,7 +3,6 @@
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel
 from pydantic import Field
@@ -18,7 +17,7 @@ def _default_user_dir() -> Path:
 class Config(BaseModel):
     """Panel Live Server configuration."""
 
-    port: int = Field(default=5005, description="Port for the Panel server")
+    port: int = Field(default=5077, description="Port for the Panel server")
     host: str = Field(default="localhost", description="Host address for the Panel server")
     max_restarts: int = Field(default=3, description="Maximum number of restart attempts")
     db_path: Path = Field(
@@ -28,7 +27,7 @@ class Config(BaseModel):
     jupyter_server_proxy_url: str = Field(default="", description="Jupyter server proxy URL")
 
 
-_config: Optional[Config] = None
+_config: Config | None = None
 
 
 def get_config() -> Config:
@@ -36,8 +35,9 @@ def get_config() -> Config:
     global _config
     if _config is None:
         _config = Config(
-            port=int(os.getenv("PANEL_LIVE_SERVER_PORT", "5005")),
+            port=int(os.getenv("PANEL_LIVE_SERVER_PORT", "5077")),
             host=os.getenv("PANEL_LIVE_SERVER_HOST", "localhost"),
+            max_restarts=int(os.getenv("PANEL_LIVE_SERVER_MAX_RESTARTS", "3")),
             db_path=Path(os.getenv("PANEL_LIVE_SERVER_DB_PATH", str(_default_user_dir() / "snippets" / "snippets.db"))),
             jupyter_server_proxy_url=os.getenv("JUPYTER_SERVER_PROXY_URL", ""),
         )

@@ -26,7 +26,7 @@ class DisplayClient:
         Parameters
         ----------
         base_url : str
-            Base URL of the Display Server (e.g., "http://localhost:5005")
+            Base URL of the Display Server (e.g., "http://localhost:5077")
         timeout : int
             Request timeout in seconds
         """

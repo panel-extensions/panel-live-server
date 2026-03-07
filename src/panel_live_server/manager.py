@@ -27,7 +27,7 @@ class PanelServerManager:
     def __init__(
         self,
         db_path: Path,
-        port: int = 5005,
+        port: int = 5077,
         host: str = "localhost",
         max_restarts: int = 3,
     ):

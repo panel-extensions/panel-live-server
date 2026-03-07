@@ -1,6 +1,6 @@
 """Panel Live Server - MCP Server.
 
-A standalone MCP server that provides `show` and `show_pyodide` tools
+A standalone MCP server that provides the `show` tool
 for executing Python code and rendering visualizations via a Panel web server.
 """
 
@@ -11,7 +11,6 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from typing import Optional
 from urllib.parse import urlparse
 
 from fastmcp import Context
@@ -27,12 +26,10 @@ logger = logging.getLogger(__name__)
 
 SHOW_RESOURCE_URI = "ui://panel-live-server/show.html"
 SHOW_TEMPLATE_PATH = Path(__file__).parent / "templates" / "show.html"
-SHOW_PYODIDE_RESOURCE_URI = "ui://panel-live-server/show-pyodide.html"
-SHOW_PYODIDE_TEMPLATE_PATH = Path(__file__).parent / "templates" / "show_pyodide.html"
 
 # Global instances
-_manager: Optional[PanelServerManager] = None
-_client: Optional[DisplayClient] = None
+_manager: PanelServerManager | None = None
+_client: DisplayClient | None = None
 
 
 def _externalize_url(url: str) -> str:
@@ -64,7 +61,7 @@ def _externalize_url(url: str) -> str:
     return url
 
 
-def _start_panel_server() -> tuple[Optional[PanelServerManager], Optional[DisplayClient]]:
+def _start_panel_server() -> tuple[PanelServerManager | None, DisplayClient | None]:
     """Start the Panel server subprocess and create a client."""
     config = get_config()
 
@@ -121,7 +118,7 @@ mcp = FastMCP(
     instructions=(
         "Panel Live Server executes Python code snippets and renders the resulting "
         "visualizations as live, interactive web pages. Use the `show` tool to display "
-        "plots, dashboards, and data apps. Use `show_pyodide` for client-side rendering."
+        "plots, dashboards, and data apps."
     ),
     lifespan=app_lifespan,
 )
@@ -153,46 +150,6 @@ def show_view() -> str:
     return SHOW_TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
-@mcp.resource(
-    SHOW_PYODIDE_RESOURCE_URI,
-    app=AppConfig(
-        csp=ResourceCSP(
-            resource_domains=[
-                "'unsafe-inline'",
-                "'unsafe-eval'",
-                "'wasm-unsafe-eval'",
-                "blob:",
-                "data:",
-                "https://unpkg.com",
-                "https://panel-extensions.github.io",
-                "https://cdn.holoviz.org",
-                "https://cdn.jsdelivr.net",
-                "https://cdn.plot.ly",
-                "https://pyodide-cdn2.iodide.io",
-                "https://pypi.org",
-                "https://files.pythonhosted.org",
-                "https://cdn.bokeh.org",
-                "https://raw.githubusercontent.com",
-            ],
-            connect_domains=[
-                "https://panel-extensions.github.io",
-                "https://cdn.holoviz.org",
-                "https://cdn.jsdelivr.net",
-                "https://cdn.plot.ly",
-                "https://pyodide-cdn2.iodide.io",
-                "https://pypi.org",
-                "https://files.pythonhosted.org",
-                "https://cdn.bokeh.org",
-                "https://raw.githubusercontent.com",
-            ],
-        )
-    ),
-)
-def show_pyodide_view() -> str:
-    """Return the HTML resource used by the show_pyodide MCP App."""
-    return SHOW_PYODIDE_TEMPLATE_PATH.read_text(encoding="utf-8")
-
-
 # --- Tools ---
 
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
@@ -222,7 +179,8 @@ async def show(
         A short description of the visualization
     method : {"jupyter", "panel"}, default "jupyter"
         Execution mode:
-        - "jupyter": Execute code and display the last expression's result. The last expression must be dedented fully.
+        - "jupyter": Execute code and display the last expression's result.
+            The last expression must be fully dedented (i.e. at column 0, no leading whitespace).
             DO use this for standard data visualizations like plots, dataframes, etc. that do not import and use Panel directly.
         - "panel": Execute code and display Panel objects marked .servable()
             DO use this for code that imports and uses Panel to create dashboards, apps, and complex layouts.
@@ -235,7 +193,11 @@ async def show(
     global _manager, _client
 
     if not _client:
-        return "Error: Panel Live Server is not running. Check logs for startup errors."
+        return json.dumps({
+            "status": "error",
+            "message": "Panel Live Server is not running. Check logs for startup errors.",
+            "recovery": "Try restarting the MCP server. Check that port 5077 is available.",
+        })
 
     # Check health with restart logic
     if not _client.is_healthy():
@@ -246,7 +208,11 @@ async def show(
             _client.close()
             _client = DisplayClient(base_url=_manager.get_base_url())
         else:
-            return "Error: Panel Live Server is not healthy and failed to restart."
+            return json.dumps({
+                "status": "error",
+                "message": "Panel Live Server is not healthy and failed to restart.",
+                "recovery": "Kill any process on port 5077 and restart the MCP server.",
+            })
 
     # Send request to Panel server
     try:
@@ -283,50 +249,8 @@ async def show(
         if ctx:
             await ctx.error(f"Failed to create visualization: {e}")
 
-        return f"Error: Failed to create visualization: {str(e)}"
-
-
-@mcp.tool(name="show_pyodide", app=AppConfig(resource_uri=SHOW_PYODIDE_RESOURCE_URI))
-async def show_pyodide(
-    code: str,
-    name: str = "",
-    description: str = "",
-    ctx: Context | None = None,
-) -> str:
-    """Display Python code as a panel-live Pyodide app in MCP Apps-capable clients.
-
-    This tool is intended for browser/Pyodide rendering paths where direct
-    server execution should be avoided. It returns a payload consumed
-    by the linked MCP App resource.
-
-    Parameters
-    ----------
-    code : str
-        Python code to run inside panel-live/Pyodide runtime.
-    name : str, optional
-        Optional display name used by the app UI.
-    description : str, optional
-        Optional description shown in the app UI.
-    ctx : Context | None, optional
-        FastMCP execution context.
-
-    Returns
-    -------
-    str
-        JSON payload as text for the MCP App resource.
-    """
-    if not code.strip():
-        return json.dumps({"error": "Code is required for show_pyodide."})
-
-    payload = {
-        "tool": "show_pyodide",
-        "name": name,
-        "description": description,
-        "code": code,
-        "runtime": "panel-live-pyodide",
-    }
-
-    if ctx:
-        await ctx.info("Prepared show_pyodide payload for MCP App rendering.")
-
-    return json.dumps(payload)
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to create visualization: {e!s}",
+            "recovery": "Check that the Panel server is running and the code is valid Python.",
+        })
