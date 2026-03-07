@@ -48,6 +48,11 @@
         background: rgba(120, 120, 120, 0.12);
       }
 
+      button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+
       .message {
         margin: 0;
         font-size: 0.9rem;
@@ -117,7 +122,7 @@
   <body>
     <div class="layout">
       <div class="actions">
-        <button id="copy-code" type="button">Copy Code</button>
+        <button id="copy-code" type="button" disabled>Copy Code</button>
         <button id="copy-link" type="button">Copy URL</button>
         <a id="open-link" class="button" href="#" target="_blank" rel="noopener" style="display:none">Open ↗</a>
       </div>
@@ -179,13 +184,22 @@
 
         if (parsedPayload && typeof parsedPayload === "object") {
           const status = parsedPayload.status || "success";
-          const baseMessage = parsedPayload.message || "Tool result received.";
+          const statusPrefix = status === "error" ? "✗ " : status === "warning" ? "⚠ " : "";
+          const baseMessage = statusPrefix + (parsedPayload.message || "Tool result received.");
           const extraError = parsedPayload.error_message ? `\n\n${parsedPayload.error_message}` : "";
           const recovery = parsedPayload.recovery ? `\n\n${parsedPayload.recovery}` : "";
 
           messageEl.classList.add(`status-${status}`);
           currentUrl = typeof parsedPayload.url === "string" ? parsedPayload.url : "";
           currentCode = typeof parsedPayload.code === "string" ? parsedPayload.code : "";
+
+          // Update tab title with visualization name if available
+          if (parsedPayload.name) {
+            document.title = `Panel Live Server · ${parsedPayload.name}`;
+          }
+
+          // Enable Copy Code button now that we have a result
+          copyCodeButton.disabled = !currentCode;
 
           // Build message with optional clickable URL
           if (currentUrl) {

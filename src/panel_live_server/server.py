@@ -104,8 +104,7 @@ async def app_lifespan(app):
 
     if _manager:
         atexit.register(_cleanup)
-        config = get_config()
-        feed_url = _externalize_url(f"http://{config.host}:{config.port}/feed")
+        feed_url = _externalize_url(f"http://{_manager.host}:{_manager.port}/feed")
         # Print to stderr so it's visible even in stdio MCP mode
         print(f"\n  Panel Live Server is running.\n  Feed: {feed_url}\n", file=sys.stderr, flush=True)
         logger.info(f"Panel Live Server started — feed: {feed_url}")

@@ -163,6 +163,48 @@ def mcp(
         raise typer.Exit(1)
 
 
+@app.command()
+def status(
+    port: int = typer.Option(
+        5077,
+        "--port",
+        "-p",
+        help="Port to check.",
+        envvar="PANEL_LIVE_SERVER_PORT",
+        show_default=True,
+    ),
+    host: str = typer.Option(
+        "localhost",
+        "--host",
+        "-H",
+        help="Host to check.",
+        envvar="PANEL_LIVE_SERVER_HOST",
+        show_default=True,
+    ),
+) -> None:
+    """Check whether the Panel server is running.
+
+    Queries the health endpoint and reports the server status.
+    """
+    import requests
+
+    url = f"http://{host}:{port}/api/health"
+    try:
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            data = resp.json()
+            typer.echo(f"Running  http://{host}:{port}/feed  (healthy at {data.get('timestamp', '?')})")
+        else:
+            typer.echo(f"Unhealthy  http://{host}:{port}  (status {resp.status_code})")
+            raise typer.Exit(1)
+    except requests.ConnectionError:
+        typer.echo(f"Not running  (nothing on {host}:{port})")
+        raise typer.Exit(1)
+    except requests.Timeout:
+        typer.echo(f"Timeout  (no response from {host}:{port} within 3 s)")
+        raise typer.Exit(1)
+
+
 def main() -> None:
     """Entry point for the pls command."""
     app()

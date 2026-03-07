@@ -9,8 +9,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
-
 import requests  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
@@ -43,7 +41,7 @@ class PanelServerManager:
         self.port = port
         self.host = host
         self.max_restarts = max_restarts
-        self.process: Optional[subprocess.Popen] = None
+        self.process: subprocess.Popen | None = None
         self.restart_count = 0
 
     def _is_port_in_use(self) -> bool:
