@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
 import requests  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)

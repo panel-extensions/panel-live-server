@@ -13,38 +13,81 @@
       body {
         margin: 0;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        overflow-x: hidden;
       }
 
       .layout {
         display: grid;
-        grid-template-rows: auto auto 1fr;
+        grid-template-rows: auto 1fr;
         min-height: 100vh;
-        gap: 10px;
-        padding: 10px 12px 12px;
+        gap: 6px;
+        padding: 6px 8px 8px;
         box-sizing: border-box;
       }
 
-      .actions {
+      .toolbar {
         display: flex;
-        gap: 8px;
+        gap: 6px;
         align-items: center;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        min-height: 28px;
       }
 
-      button,
-      a.button {
+      .toolbar-sep {
+        width: 1px;
+        height: 16px;
+        background: rgba(120, 120, 120, 0.3);
+        flex-shrink: 0;
+      }
+
+      .message {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
+        font-size: 0.8rem;
+        opacity: 0.75;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1;
+      }
+
+      .message.status-error {
+        color: #c0392b;
+        opacity: 1;
+        font-weight: 600;
+      }
+
+      .message.status-warning {
+        color: #b85c00;
+        opacity: 1;
+        font-weight: 600;
+      }
+
+      .message.status-error span,
+      .message.status-warning span {
+        background: rgba(192, 57, 43, 0.1);
+        border-radius: 4px;
+        padding: 1px 6px;
+      }
+
+      .message.status-warning span {
+        background: rgba(184, 92, 0, 0.1);
+      }
+
+      button {
         border: 1px solid rgba(120, 120, 120, 0.4);
-        border-radius: 8px;
-        padding: 5px 10px;
+        border-radius: 6px;
+        padding: 3px 8px;
         background: transparent;
         color: inherit;
-        text-decoration: none;
         cursor: pointer;
-        font-size: 0.85rem;
+        font-size: 0.78rem;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
 
-      button:hover,
-      a.button:hover {
+      button:hover {
         background: rgba(120, 120, 120, 0.12);
       }
 
@@ -53,29 +96,22 @@
         cursor: default;
       }
 
-      .message {
-        margin: 0;
-        font-size: 0.9rem;
-        white-space: pre-wrap;
-        opacity: 0.9;
-        line-height: 1.4;
+      button.copied {
+        color: #3b9a5f;
+        border-color: #3b9a5f;
       }
 
-      .message a {
-        color: inherit;
-        text-decoration: underline;
-        text-underline-offset: 2px;
+      button.zoom-active {
+        background: rgba(120, 120, 120, 0.18);
+        border-color: rgba(120, 120, 120, 0.7);
       }
-
-      .message.status-error   { color: #e05252; }
-      .message.status-warning { color: #d4860a; }
-      .message.status-success { color: inherit; }
 
       .iframe-wrapper {
         position: relative;
         width: 100%;
-        height: calc(100vh - 110px);
-        min-height: 360px;
+        height: 100%;
+        min-height: 300px;
+        overflow: hidden;
       }
 
       iframe {
@@ -85,6 +121,7 @@
         border-radius: 8px;
         background: white;
         display: block;
+        transform-origin: top left;
       }
 
       /* Loading overlay */
@@ -104,6 +141,16 @@
 
       .loading-overlay.hidden { display: none; }
 
+      .loading-overlay.blocked {
+        flex-direction: column;
+        gap: 8px;
+        opacity: 1;
+        pointer-events: auto;
+        background: rgba(128, 128, 128, 0.05);
+      }
+
+      .loading-overlay.blocked .spinner { display: none; }
+
       .spinner {
         width: 18px;
         height: 18px;
@@ -121,12 +168,17 @@
   </head>
   <body>
     <div class="layout">
-      <div class="actions">
-        <button id="copy-code" type="button" disabled>Copy Code</button>
+      <div class="toolbar">
         <button id="copy-link" type="button">Copy URL</button>
-        <a id="open-link" class="button" href="#" target="_blank" rel="noopener" style="display:none">Open ↗</a>
+        <button id="copy-code" type="button" disabled>Copy Code</button>
+        <div class="toolbar-sep"></div>
+        <p id="message" class="message">Awaiting tool result…</p>
+        <div class="toolbar-sep"></div>
+        <button id="zoom-100" type="button" class="zoom-active">100%</button>
+        <button id="zoom-75"  type="button">75%</button>
+        <button id="zoom-50"  type="button">50%</button>
+        <button id="zoom-25"  type="button">25%</button>
       </div>
-      <p id="message" class="message">Awaiting tool result…</p>
       <div class="iframe-wrapper">
         <div id="loading-overlay" class="loading-overlay">
           <div class="spinner"></div>
@@ -144,26 +196,104 @@
       const loadingOverlay = document.getElementById("loading-overlay");
       const copyCodeButton = document.getElementById("copy-code");
       const copyLinkButton = document.getElementById("copy-link");
-      const openLink = document.getElementById("open-link");
+      const zoomButtons = [
+        { btn: document.getElementById("zoom-100"), scale: 1    },
+        { btn: document.getElementById("zoom-75"),  scale: 0.75 },
+        { btn: document.getElementById("zoom-50"),  scale: 0.5  },
+        { btn: document.getElementById("zoom-25"),  scale: 0.25 },
+      ];
+
+      function applyZoom(scale) {
+        zoomButtons.forEach(({ btn, scale: s }) => btn.classList.toggle("zoom-active", s === scale));
+        if (scale === 1) {
+          iframe.style.transform = "";
+          iframe.style.width = "";
+          iframe.style.height = "";
+        } else {
+          const inv = (1 / scale * 100).toFixed(3) + "%";
+          iframe.style.transform = `scale(${scale})`;
+          iframe.style.width = inv;
+          iframe.style.height = inv;
+        }
+      }
+
+      zoomButtons.forEach(({ btn, scale }) => btn.addEventListener("click", () => applyZoom(scale)));
 
       let currentUrl = "";
       let currentCode = "";
+      let loadTimer = null;
 
-      // Show loading overlay when iframe starts loading a real URL
+      function hideSpinner() {
+        clearTimeout(loadTimer);
+        loadTimer = null;
+        loadingOverlay.classList.add("hidden");
+        loadingOverlay.classList.remove("blocked");
+        loadingOverlay.innerHTML =
+          '<div class="spinner"></div><span>Loading visualization…</span>';
+      }
+
+      function showBlockedFallback() {
+        loadingOverlay.classList.remove("hidden");
+        loadingOverlay.classList.add("blocked");
+        loadingOverlay.innerHTML =
+          '<span style="font-size:0.85rem;opacity:0.7">Visualization may require sign-in to view inline.</span>' +
+          (currentUrl
+            ? `<a href="${currentUrl}" target="_blank" rel="noopener" style="font-size:0.85rem;color:inherit;text-decoration:underline;text-underline-offset:2px">Open in browser ↗</a>`
+            : "");
+      }
+
+      // Hide spinner when iframe finishes loading
       iframe.addEventListener("load", () => {
         if (iframe.src && iframe.src !== "about:blank") {
-          loadingOverlay.classList.add("hidden");
+          hideSpinner();
         }
       });
 
+      // Fallback: if load never fires within 10s, show "open in browser" prompt
+      function startLoadTimer() {
+        clearTimeout(loadTimer);
+        loadTimer = setTimeout(showBlockedFallback, 10_000);
+      }
+
+      async function copyToClipboard(text) {
+        if (navigator.clipboard) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return true;
+          } catch (_) {
+            // fall through to legacy path
+          }
+        }
+        // Legacy fallback — works in VS Code webviews
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      }
+
+      function flashCopied(btn) {
+        const original = btn.textContent;
+        btn.textContent = "Copied ✓";
+        btn.classList.add("copied");
+        setTimeout(() => {
+          btn.textContent = original;
+          btn.classList.remove("copied");
+        }, 1500);
+      }
+
       copyCodeButton.addEventListener("click", async () => {
-        if (!navigator.clipboard) return;
-        await navigator.clipboard.writeText(currentCode || "No code available.");
+        const ok = await copyToClipboard(currentCode || "No code available.");
+        if (ok) flashCopied(copyCodeButton);
       });
 
       copyLinkButton.addEventListener("click", async () => {
-        if (!currentUrl || !navigator.clipboard) return;
-        await navigator.clipboard.writeText(currentUrl);
+        if (!currentUrl) return;
+        const ok = await copyToClipboard(currentUrl);
+        if (ok) flashCopied(copyLinkButton);
       });
 
       const app = new App({ name: "panel-live-server-show", version: "0.1.0" });
@@ -201,42 +331,37 @@
           // Enable Copy Code button now that we have a result
           copyCodeButton.disabled = !currentCode;
 
-          // Build message with optional clickable URL
-          if (currentUrl) {
-            messageEl.innerHTML = "";
-            const textNode = document.createTextNode(`${baseMessage}${extraError}${recovery} `);
-            messageEl.appendChild(textNode);
-            const link = document.createElement("a");
-            link.href = currentUrl;
-            link.target = "_blank";
-            link.rel = "noopener";
-            link.textContent = "Open ↗";
-            messageEl.appendChild(link);
-          } else {
-            messageEl.textContent = `${baseMessage}${extraError}${recovery}`;
+          // Apply zoom from payload
+          const zoomVal = parsedPayload.zoom;
+          if (zoomVal && zoomVal !== 100) {
+            const scale = zoomVal / 100;
+            const entry = zoomButtons.find(z => Math.abs(z.scale - scale) < 0.01);
+            if (entry) applyZoom(entry.scale);
           }
+
+          const fullText = `${baseMessage}${extraError}${recovery}`;
+          // Show short label in toolbar; full detail on hover
+          // Wrap in span so tinted background hugs the text, not the full flex width
+          messageEl.innerHTML = `<span>${baseMessage}</span>`;
+          messageEl.title = fullText;
         } else {
           messageEl.textContent = rawText;
+          messageEl.title = rawText;
           const urlRegex = /(https?:\/\/[^\s)]+)/i;
           const match = rawText.match(urlRegex);
           currentUrl = match ? match[1] : "";
           currentCode = "";
         }
 
-        // Update Open button visibility
+        // Load iframe (show loading overlay + start timeout fallback)
         if (currentUrl) {
-          openLink.href = currentUrl;
-          openLink.style.display = "";
-        } else {
-          openLink.style.display = "none";
-        }
-
-        // Load iframe (show loading overlay)
-        if (currentUrl) {
-          loadingOverlay.classList.remove("hidden");
+          loadingOverlay.classList.remove("hidden", "blocked");
+          loadingOverlay.innerHTML =
+            '<div class="spinner"></div><span>Loading visualization…</span>';
           iframe.src = currentUrl;
+          startLoadTimer();
         } else {
-          loadingOverlay.classList.add("hidden");
+          hideSpinner();
           iframe.src = "about:blank";
         }
       };

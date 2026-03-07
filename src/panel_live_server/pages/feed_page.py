@@ -68,7 +68,10 @@ def feed_page():
         title = f"""\
 **{req.name or req.id}** ({created_at})\n\n{req.description}\n
 """
-        iframe = f"""<div style="resize: vertical; overflow: hidden; height: max(calc(75vh - 300px), 300px); min-height: 300px; width: 100%; max-width: 100%; border: 1px solid gray;">
+        div_style = (
+            "resize: vertical; overflow: hidden; height: max(calc(75vh - 300px), 300px); min-height: 300px; width: 100%; max-width: 100%; border: 1px solid gray;"
+        )
+        iframe = f"""<div style="{div_style}">
 <iframe
     src="{url}"
     style="height: 100%; width: 100%; border: none;"

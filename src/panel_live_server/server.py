@@ -106,7 +106,7 @@ async def app_lifespan(app):
         atexit.register(_cleanup)
         feed_url = _externalize_url(f"http://{_manager.host}:{_manager.port}/feed")
         # Print to stderr so it's visible even in stdio MCP mode
-        print(f"\n  Panel Live Server is running.\n  Feed: {feed_url}\n", file=sys.stderr, flush=True)
+        print(f"\n  Panel Live Server is running.\n  Feed: {feed_url}\n", file=sys.stderr, flush=True)  # noqa: T201
         logger.info(f"Panel Live Server started — feed: {feed_url}")
     else:
         logger.warning("Panel Live Server failed to start - show tool will not work")
@@ -129,6 +129,7 @@ mcp = FastMCP(
 
 
 # --- Resources ---
+
 
 @mcp.resource(
     SHOW_RESOURCE_URI,
@@ -156,12 +157,41 @@ def show_view() -> str:
 
 # --- Tools ---
 
+
+@mcp.tool(name="list_packages")
+async def list_packages(ctx: Context | None = None) -> list[dict[str, str]]:
+    """List all Python packages installed in the server environment.
+
+    Use this tool to discover what libraries are available before writing
+    visualization code, so you can import only packages that are installed.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        Sorted list of ``{"name": ..., "version": ...}`` dicts, one per
+        installed distribution.
+
+    Examples
+    --------
+    >>> packages()
+    [{"name": "hvplot", "version": "0.11.0"}, ...]
+    """
+    from importlib.metadata import distributions
+
+    pkgs = sorted(
+        ({"name": dist.metadata["Name"], "version": dist.metadata["Version"]} for dist in distributions()),
+        key=lambda d: d["name"].lower().replace("-", "_"),
+    )
+    return pkgs
+
+
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
 async def show(
     code: str,
     name: str = "",
     description: str = "",
     method: Literal["jupyter", "panel"] = "jupyter",
+    zoom: int = 100,
     ctx: Context | None = None,
 ) -> str:
     """Display Python code as a live, interactive visualization.
@@ -171,6 +201,9 @@ async def show(
 
     IMPORTANT — always provide a short `name` (e.g. "Temperature chart") so the
     visualization can be identified in the feed. The `description` is optional but helpful.
+
+    IMPORTANT — after calling this tool, always present the returned `url` to the user
+    as a clickable Markdown link, e.g.: [Open visualization](https://...)
 
     Parameters
     ----------
@@ -190,6 +223,15 @@ async def show(
           dataframes, and objects that do NOT import panel directly.
         - "panel": displays objects marked `.servable()`. Use when the code imports
           and uses Panel to build dashboards, apps, or complex layouts.
+    zoom : {100, 75, 50, 25}, default 100
+        Initial zoom level for the visualization preview.
+        Choose based on how much content the visualization contains:
+        - 100: simple plots, single charts, dataframes, small widgets — fits naturally.
+        - 75: multi-panel layouts, apps with a sidebar, moderate dashboards.
+        - 50: full-page template apps (FastListTemplate, MaterialTemplate, etc.)
+          with header + sidebar + main area.
+        - 25: very large or wide apps designed for big screens; use when 50 still
+          feels cramped in the preview pane.
 
     Returns
     -------
@@ -198,13 +240,19 @@ async def show(
     """
     global _manager, _client
 
+    # Clamp zoom to nearest valid level
+    _valid_zooms = [25, 50, 75, 100]
+    zoom = min(_valid_zooms, key=lambda z: abs(z - zoom))
+
     if not _client:
         config = get_config()
-        return json.dumps({
-            "status": "error",
-            "message": "Panel Live Server is not running. Check logs for startup errors.",
-            "recovery": f"Restart the MCP server. Ensure port {config.port} is not already in use.",
-        })
+        return json.dumps(
+            {
+                "status": "error",
+                "message": "Panel Live Server is not running. Check logs for startup errors.",
+                "recovery": f"Restart the MCP server. Ensure port {config.port} is not already in use.",
+            }
+        )
 
     # Check health with restart logic
     if not _client.is_healthy():
@@ -216,11 +264,13 @@ async def show(
             _client = DisplayClient(base_url=_manager.get_base_url())
         else:
             config = get_config()
-            return json.dumps({
-                "status": "error",
-                "message": "Panel Live Server is not healthy and failed to restart.",
-                "recovery": f"Kill any process on port {config.port} and restart the MCP server.",
-            })
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": "Panel Live Server is not healthy and failed to restart.",
+                    "recovery": f"Kill any process on port {config.port} and restart the MCP server.",
+                }
+            )
 
     # Send request to Panel server
     try:
@@ -232,11 +282,12 @@ async def show(
         )
         url = _externalize_url(response.get("url", ""))
 
-        payload: dict[str, str] = {
+        payload: dict[str, str | int] = {
             "tool": "show",
             "name": name,
             "description": description,
             "method": method,
+            "zoom": zoom,
             "code": code,
             "url": url,
         }
@@ -257,8 +308,10 @@ async def show(
         if ctx:
             await ctx.error(f"Failed to create visualization: {e}")
 
-        return json.dumps({
-            "status": "error",
-            "message": f"Failed to create visualization: {e!s}",
-            "recovery": "Check that the Panel server is running and the code is valid Python.",
-        })
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Failed to create visualization: {e!s}",
+                "recovery": "Check that the Panel server is running and the code is valid Python.",
+            }
+        )

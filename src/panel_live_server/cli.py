@@ -23,6 +23,9 @@ app = typer.Typer(
     add_completion=False,
 )
 
+list_app = typer.Typer(help="List resources (packages, etc.).")
+app.add_typer(list_app, name="list")
+
 
 @app.callback(invoke_without_command=True)
 def main_callback(
@@ -199,10 +202,42 @@ def status(
             raise typer.Exit(1)
     except requests.ConnectionError:
         typer.echo(f"Not running  (nothing on {host}:{port})")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     except requests.Timeout:
         typer.echo(f"Timeout  (no response from {host}:{port} within 3 s)")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
+
+
+@list_app.command(name="packages")
+def list_packages(
+    filter: str = typer.Argument(
+        "",
+        help="Optional substring to filter package names (case-insensitive).",
+        show_default=False,
+    ),
+) -> None:
+    """List all Python packages installed in the current environment.
+
+    Optionally filter by a substring, e.g. ``pls list packages panel`` to show
+    only packages whose name contains "panel".
+    """
+    from importlib.metadata import distributions
+
+    pkgs = sorted(
+        ((dist.metadata["Name"], dist.metadata["Version"]) for dist in distributions()),
+        key=lambda t: t[0].lower().replace("-", "_"),
+    )
+
+    if filter:
+        pkgs = [(name, ver) for name, ver in pkgs if filter.lower() in name.lower()]
+
+    if not pkgs:
+        typer.echo("No packages found.")
+        return
+
+    name_width = max(len(name) for name, _ in pkgs)
+    for name, version in pkgs:
+        typer.echo(f"{name:<{name_width}}  {version}")
 
 
 def main() -> None:

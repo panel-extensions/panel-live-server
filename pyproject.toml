@@ -73,6 +73,31 @@ mypy = [
     "typing-extensions",
     "panel>=1.5.0",
 ]
+pydata = [
+    "altair",
+    "datashader",
+    "duckdb",
+    "holoviews",
+    "hvplot",
+    "hvsampledata",
+    "ipywidgets_bokeh",
+    "matplotlib",
+    "panel-full-calendar",
+    "panel-graphic-walker",
+    "panel-neuroglancer",
+    "panel-precision-slider",
+    "panel-splitjs",
+    "panel-web-llm",
+    "plotly",
+    "polars",
+    "pyarrow",
+    "scikit-learn",
+    "seaborn",
+    "setuptools", # Due to https://github.com/bokeh/ipywidgets_bokeh/issues/125
+    "shapely",
+    "vega_datasets",
+    "yfinance",
+]
 
 [tool.ruff]
 exclude = [
@@ -126,7 +151,7 @@ select = [
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests`.
 "tests/**" = ["D"]
 # Ignore all files that end in `_test.py`.

@@ -1,9 +1,6 @@
 [project]
 site_name = "panel-live-server"
-site_description = "Panel Live Server is a local Panel web server that executes   
-  Python code snippets and renders the resulting visualizations 
-  as live, interactive web pages — enabling AI assistants to    
-  display and inspect HoloViz outputs in real time.   "
+site_description = "Panel Live Server is a local Panel web server that executes Python code snippets and renders the resulting visualizations as live, interactive web pages — enabling AI assistants to display and inspect HoloViz outputs in real time."
 site_author = "MarcSkovMadsen"
 repo_url = "https://github.com/panel-extensions/panel-live-server"
 repo_name = "panel-extensions/panel-live-server"

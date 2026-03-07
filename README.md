@@ -6,10 +6,10 @@
 [![python-version](https://img.shields.io/pypi/pyversions/panel-live-server?logoColor=white&logo=python&style=flat-square)](https://pypi.org/project/panel-live-server)
 
 
-Panel Live Server is a local Panel web server that executes   
-  Python code snippets and renders the resulting visualizations 
-  as live, interactive web pages — enabling AI assistants to    
-  display and inspect HoloViz outputs in real time.   
+Panel Live Server is a local Panel web server that executes
+  Python code snippets and renders the resulting visualizations
+  as live, interactive web pages — enabling AI assistants to
+  display and inspect HoloViz outputs in real time.
 
 ## Features
 
