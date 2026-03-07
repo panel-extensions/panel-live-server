@@ -1,0 +1,16 @@
+# This file is managed by Copier; DO NOT EDIT OR REMOVE.
+_commit: 66fe113
+_src_path: https://github.com/panel-extensions/copier-template-panel-extension
+add_autobump_workflow: true
+author_email: marc.skov.madsen@gmail.com
+author_name: MarcSkovMadsen
+docs_url: https://panel-extensions.github.io/panel-live-server/
+extension_type: panel
+github_url: https://github.com/panel-extensions/panel-live-server
+github_user: panel-extensions
+minimal_python_version: py312
+project_short_description: "Panel Live Server is a local Panel web server that executes\
+    \   \n  Python code snippets and renders the resulting visualizations \n  as live,\
+    \ interactive web pages — enabling AI assistants to    \n  display and inspect\
+    \ HoloViz outputs in real time.   "
+project_slug: panel-live-server
