@@ -16,6 +16,7 @@ from panel_live_server.database import Snippet
 from panel_live_server.database import get_db
 from panel_live_server.utils import execute_in_module
 from panel_live_server.utils import extract_last_expression
+from panel_live_server.utils import find_extensions
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,12 @@ def create_view(snippet_id: str) -> pn.viewable.Viewable | None:
     db = get_db()
     snippet = db.get_snippet(snippet_id)
 
-    pn.extension("codeeditor")
+    # Load extensions at the Panel session level so their JavaScript assets are
+    # registered before the page is served.  For jupyter-method snippets the
+    # required extensions were inferred at storage time; always include codeeditor
+    # for the error/code display pane.
+    session_extensions = list({"codeeditor"} | set(find_extensions(snippet.app) if snippet else []))
+    pn.extension(*session_extensions)
 
     if not snippet:
         return pn.pane.Markdown(f"# Error\n\nSnippet {snippet_id} not found.")
@@ -117,18 +123,13 @@ def _execute_code(snippet: Snippet) -> pn.viewable.Viewable | None:
     """
     module_name = f"pls_snippet_{snippet.id.replace('-', '_')}"
 
-    # We need to reset the material design
-    app: str = (
-        """\
-import panel as pn
-
-pn.config.design = None
-
-"""
-        + snippet.app
-    )
+    preamble = "import panel as pn\n\npn.config.design = None\n\n"
 
     if snippet.method == "jupyter":
+        # Extensions are loaded at the Panel session level in create_view(); no
+        # need to inject pn.extension() into the executed code here.
+        app = preamble + snippet.app
+
         # Extract last expression
         try:
             statements, last_expr = extract_last_expression(app)
@@ -159,6 +160,7 @@ pn.config.design = None
             return pn.pane.Markdown("*Code executed successfully (no output to display)*")
 
     else:  # panel method
+        app = preamble + snippet.app
         # Execute code that should call .servable()
         execute_in_module(
             app,

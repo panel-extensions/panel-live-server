@@ -106,7 +106,27 @@ def serve(
 
     from panel_live_server.app import main as app_main
 
-    app_main(address=host, port=port, show=show)
+    try:
+        app_main(address=host, port=port, show=show)
+    except OSError as exc:
+        import errno
+
+        import requests
+
+        if exc.errno != errno.EADDRINUSE:
+            raise
+        url = f"http://{host}:{port}/api/health"
+        try:
+            resp = requests.get(url, timeout=2)
+            if resp.status_code == 200:
+                typer.echo(f"Panel Live Server is already running at http://{host}:{port}")
+                typer.echo("  Run `pls status` for details.")
+                raise typer.Exit(0)
+        except requests.ConnectionError:
+            pass
+        typer.echo(f"Error: port {port} is already in use by another process.", err=True)
+        typer.echo(f"  Try: pls serve --port {port + 1}", err=True)
+        raise typer.Exit(1) from None
 
 
 @app.command()

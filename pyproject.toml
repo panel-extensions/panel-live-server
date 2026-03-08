@@ -2,14 +2,8 @@
 requires = [
     "hatchling",
     "hatch-vcs",
-    "panel>=1.5.0",
-    "packaging",
 ]
 build-backend = "hatchling.build"
-
-
-[tool.setuptools_scm]
-version_scheme = "post-release"
 
 [project]
 name = "panel-live-server"
@@ -78,6 +72,7 @@ pydata = [
     "altair",
     "datashader",
     "duckdb",
+    "great-tables",
     "holoviews",
     "hvplot",
     "hvsampledata",
@@ -90,9 +85,12 @@ pydata = [
     "panel-splitjs",
     "panel-web-llm",
     "plotly",
+    "plotnine",
     "polars",
+    "pooch",
     "pyarrow",
     "scikit-learn",
+    "scikit-image",
     "seaborn",
     "setuptools", # Due to https://github.com/bokeh/ipywidgets_bokeh/issues/125
     "shapely",
@@ -173,6 +171,7 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
+    "ignore::RuntimeWarning",
 ]
 testpaths = ["tests"]
 

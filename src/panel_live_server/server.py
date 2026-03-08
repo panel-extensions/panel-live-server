@@ -8,6 +8,7 @@ import atexit
 import json
 import logging
 import os
+import signal
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,6 +17,7 @@ from urllib.parse import urlparse
 
 from fastmcp import Context
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.apps import AppConfig
 from fastmcp.server.apps import ResourceCSP
 
@@ -23,7 +25,12 @@ from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
 from panel_live_server.utils import ExtensionError
+from panel_live_server.utils import validate_extension_availability
 from panel_live_server.validation import SecurityError
+from panel_live_server.validation import ValidationError
+from panel_live_server.validation import ast_check
+from panel_live_server.validation import check_packages
+from panel_live_server.validation import ruff_check
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +40,62 @@ SHOW_TEMPLATE_PATH = Path(__file__).parent / "templates" / "show.html"
 # Global instances
 _manager: PanelServerManager | None = None
 _client: DisplayClient | None = None
+
+# Validation cache: (code, method) → result dict. Session-scoped; reset on restart.
+_validation_cache: dict[tuple[str, str], dict] = {}
+
+
+def _run_validation(code: str, method: str) -> dict:
+    """Run static validation layers and cache the result by (code, method).
+
+    Checks (in order):
+    1. Syntax — ``ast.parse``
+    2. Security — ruff rules + blocked-import list
+    3. Package availability — all imports must be installed
+    4. Panel extensions — declared via ``pn.extension()`` (``panel`` method only)
+
+    Parameters
+    ----------
+    code : str
+        Python code to validate.
+    method : str
+        Execution method (``"jupyter"`` or ``"panel"``).
+
+    Returns
+    -------
+    dict
+        ``{"valid": True}`` on success, or
+        ``{"valid": False, "layer": str, "message": str}`` on the first failure.
+    """
+    key = (code, method)
+    if key in _validation_cache:
+        return _validation_cache[key]
+
+    result: dict = {}
+
+    if err := ast_check(code):
+        result = {"valid": False, "layer": "syntax", "message": err}
+    else:
+        try:
+            ruff_check(code)
+        except SecurityError as e:
+            result = {"valid": False, "layer": "security", "message": str(e)}
+
+    if not result:
+        if err := check_packages(code):
+            result = {"valid": False, "layer": "packages", "message": err}
+
+    if not result and method == "panel":
+        try:
+            validate_extension_availability(code)
+        except ExtensionError as e:
+            result = {"valid": False, "layer": "extensions", "message": str(e)}
+
+    if not result:
+        result = {"valid": True}
+
+    _validation_cache[key] = result
+    return result
 
 
 def _externalize_url(url: str) -> str:
@@ -83,9 +146,15 @@ def _start_panel_server() -> tuple[PanelServerManager | None, DisplayClient | No
     return manager, client
 
 
+_cleaned_up = False
+
+
 def _cleanup():
-    """Cleanup Panel server on exit."""
-    global _manager, _client
+    """Stop the Panel server and close the client. Idempotent — safe to call multiple times."""
+    global _manager, _client, _cleaned_up
+    if _cleaned_up:
+        return
+    _cleaned_up = True
     if _client:
         logger.info("Cleaning up Panel Live Server client")
         _client.close()
@@ -94,6 +163,23 @@ def _cleanup():
         logger.info("Stopping Panel Live Server")
         _manager.stop()
         _manager = None
+
+
+def _sigterm_handler(signum, frame):
+    """Handle SIGTERM by running cleanup before exit.
+
+    Python does not call atexit handlers on SIGTERM by default. Installing this
+    handler ensures the Panel server subprocess is stopped whenever the MCP
+    server is killed (e.g. by Claude restarting it), preventing orphan processes
+    that would serve stale code on the next startup.
+    """
+    _cleanup()
+    # Restore the default handler and re-raise so the process exits with SIGTERM.
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 @asynccontextmanager
@@ -124,7 +210,18 @@ mcp = FastMCP(
     instructions=(
         "Panel Live Server executes Python code snippets and renders the resulting "
         "visualizations as live, interactive web pages. Use the `show` tool to display "
-        "plots, dashboards, and data apps."
+        "plots, dashboards, and data apps.\n\n"
+        "RECOMMENDED WORKFLOW\n"
+        "For simple, well-known code: call `show` directly — it validates and renders in "
+        "one step.\n"
+        "For complex or uncertain code: call `validate(code, method)` first. If it returns "
+        '`{"valid": true}`, call `show` (the cached result is reused, no double-validation). '
+        'If it returns `{"valid": false}`, fix the issue before calling `show`.\n\n'
+        "ERRORS\n"
+        "`show` raises `SecurityError` for blocked imports or dangerous patterns — these "
+        "require a substantive code rewrite, not a retry. "
+        "`show` raises `ValidationError` for syntax errors, missing packages, or missing "
+        "Panel extension declarations — fix the reported issue and try again."
     ),
     lifespan=app_lifespan,
 )
@@ -187,6 +284,42 @@ async def list_packages(ctx: Context | None = None) -> list[dict[str, str]]:
     return pkgs
 
 
+@mcp.tool(name="validate")
+async def validate(
+    code: str,
+    method: Literal["jupyter", "panel"] = "jupyter",
+    ctx: Context | None = None,
+) -> str:
+    """Validate Python visualization code before calling show().
+
+    Runs four static checks in order and returns a structured result without
+    creating a visualization or contacting the Panel server.
+
+    Checks performed:
+    1. Syntax — ``ast.parse``
+    2. Security — ruff security rules + blocked-import list
+    3. Package availability — all imports must be installed in this environment
+    4. Panel extensions — declared via ``pn.extension()`` (``panel`` method only;
+       ``jupyter`` method auto-injects extensions so no declaration is needed)
+
+    Parameters
+    ----------
+    code : str
+        Python code to validate.
+    method : {"jupyter", "panel"}, default "jupyter"
+        Execution method — same as the ``method`` parameter of ``show``.
+
+    Returns
+    -------
+    str
+        JSON string: ``{"valid": true}`` on success, or
+        ``{"valid": false, "layer": "syntax"|"security"|"packages"|"extensions",
+        "message": "..."}`` describing the first failing check.
+    """
+    result = _run_validation(code, method)
+    return json.dumps(result)
+
+
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
 async def show(
     code: str,
@@ -197,6 +330,10 @@ async def show(
     ctx: Context | None = None,
 ) -> str:
     """Display Python code as a live, interactive visualization.
+
+    Validates and renders code in one step — no prior ``validate()`` call required.
+    If you are unsure whether the code is correct, call ``validate(code, method)`` first;
+    ``show`` will reuse the cached result and skip re-validation.
 
     Executes Python code and renders the result in a Panel web interface.
     Always call this tool when the user asks to show, display, plot, or visualize anything.
@@ -246,15 +383,25 @@ async def show(
     _valid_zooms = [25, 50, 75, 100]
     zoom = min(_valid_zooms, key=lambda z: abs(z - zoom))
 
+    # Run static validation (cached — reuses result from a preceding validate() call).
+    validation = _run_validation(code, method)
+    if not validation["valid"]:
+        layer = validation.get("layer", "")
+        message = validation.get("message", "Validation failed.")
+        if layer == "security":
+            raise SecurityError(message)
+        elif layer == "syntax":
+            raise ValidationError(f"[syntax] {message}")
+        elif layer == "packages":
+            raise ValidationError(f"[packages] {message}")
+        elif layer == "extensions":
+            raise ValidationError(f"[extensions] {message}\n" "Add the missing pn.extension(...) call to your code.")
+        else:
+            raise ValidationError(message)
+
     if not _client:
         config = get_config()
-        return json.dumps(
-            {
-                "status": "error",
-                "message": "Panel Live Server is not running. Check logs for startup errors.",
-                "recovery": f"Restart the MCP server. Ensure port {config.port} is not already in use.",
-            }
-        )
+        raise ToolError(f"Panel Live Server is not running. " f"Restart the MCP server. Ensure port {config.port} is not already in use.")
 
     # Check health with restart logic
     if not _client.is_healthy():
@@ -266,13 +413,7 @@ async def show(
             _client = DisplayClient(base_url=_manager.get_base_url())
         else:
             config = get_config()
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": "Panel Live Server is not healthy and failed to restart.",
-                    "recovery": f"Kill any process on port {config.port} and restart the MCP server.",
-                }
-            )
+            raise ToolError(f"Panel Live Server is not healthy and failed to restart. " f"Kill any process on port {config.port} and restart the MCP server.")
 
     # Send request to Panel server
     try:
@@ -295,61 +436,30 @@ async def show(
         }
 
         if error_message := response.get("error_message", None):
-            payload["status"] = "warning"
-            payload["message"] = "Visualization created with errors."
-            payload["error_message"] = str(error_message)
-            return json.dumps(payload)
+            # Runtime error detected at storage time — raise so the LLM gets a
+            # clear text error instead of a blank App pane.
+            raise ToolError(f"Visualization created but failed at runtime:\n{error_message}\n" "Fix the code and try again.")
 
         payload["status"] = "success"
         payload["message"] = "Visualization created successfully."
         return json.dumps(payload)
 
-    except SyntaxError as e:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": f"Syntax error: {e}",
-                "recovery": "Fix the syntax error and try again.",
-            }
-        )
-
-    except SecurityError as e:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": f"Security violation:\n{e}",
-                "recovery": "Rewrite the code without the flagged pattern.",
-            }
-        )
-
-    except ExtensionError as e:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": str(e),
-                "recovery": "Add the missing pn.extension(...) call to your code.",
-            }
-        )
+    except SecurityError:
+        raise
+    except ValidationError:
+        raise
+    except (SyntaxError, ExtensionError) as e:
+        # Defensive fallback: _run_validation() should have caught these already.
+        raise ValidationError(str(e)) from e
 
     except ValueError as e:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": str(e),
-                "recovery": "Use the list_packages tool to check what is available, then adjust your code.",
-            }
-        )
+        raise ValidationError(
+            f"[packages] {e}\nDo NOT install packages or change the environment. "
+            "Call list_packages to see what is available, then rewrite using an installed library."
+        ) from e
 
     except Exception as e:
         logger.exception(f"Error creating visualization: {e}")
-
         if ctx:
             await ctx.error(f"Failed to create visualization: {e}")
-
-        return json.dumps(
-            {
-                "status": "error",
-                "message": f"Failed to create visualization: {e!s}",
-                "recovery": "Check that the Panel server is running and the code is valid Python.",
-            }
-        )
+        raise ToolError(f"Failed to create visualization: {e!s}. " "Check that the Panel server is running and the code is valid Python.") from e
