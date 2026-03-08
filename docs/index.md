@@ -14,8 +14,8 @@ and inspect Python outputs in real time.
 ## `pls mcp` — AI assistant integration
 
 Give Claude, GitHub Copilot, or any MCP-compatible AI assistant the ability to render
-visualizations directly in your IDE. The `show` tool executes Python and returns a live URL —
-no manual setup required.
+visualizations directly in your IDE. The `validate` and `show` tools execute Python and
+return a live URL — no manual setup required.
 
 ![pls mcp demo](assets/images/pls-mcp.gif)
 
@@ -27,7 +27,8 @@ The Panel server starts automatically. Ask your AI assistant:
 
 > Plot the penguins dataset. Show the distribution of species as an interactive bar chart.
 
-The AI calls the `show` tool, and the visualization appears immediately.
+The AI calls `validate` to check the code, then `show` to render it — the visualization
+appears immediately.
 
 ---
 
@@ -78,6 +79,13 @@ server restarts and are accessible by URL at any time.
 
 The Panel server runs as a managed subprocess with health monitoring and automatic restart
 (up to a configurable limit). Port conflicts and stale processes are handled automatically.
+
+### Validate before you render
+
+A dedicated `validate` tool runs four static checks — syntax, security, package
+availability, and Panel extension declarations — and returns a structured result before any
+rendering happens. `show` reuses the cached result automatically, so there is no
+double-validation overhead.
 
 ### MCP App UI
 
@@ -148,7 +156,10 @@ pixi add panel-live-server
     }
     ```
 
-    Then ask your AI: *"Show me a scatter plot of this data using the show tool."*
+    The AI will automatically call `validate` first, then `show` — errors are caught before
+    rendering so you always get clear, actionable feedback instead of a blank panel.
+
+    Ask your AI: *"Show me a scatter plot of this data using the show tool."*
 
 === "Standalone"
 

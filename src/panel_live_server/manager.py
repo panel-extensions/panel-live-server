@@ -60,20 +60,49 @@ class PanelServerManager:
         """Try to recover from a stale server occupying the port.
 
         If the port is in use, checks whether the existing server is healthy.
-        If healthy, adopts it. If unhealthy (zombie), finds and kills the
-        stale process.
+        - If healthy AND we own the subprocess (``self.process`` is set): adopt it.
+        - If healthy but we do NOT own it (orphan from a previous session): kill it
+          and return ``False`` so ``start()`` launches a fresh subprocess with the
+          current code.
+        - If unhealthy (zombie): find and kill the stale process.
 
         Returns
         -------
         bool
-            True if a healthy server is available on the port, False otherwise.
+            True if a healthy server we own is available on the port, False otherwise.
         """
         # First check if the existing server responds to health checks
         try:
             response = requests.get(f"http://{self.host}:{self.port}/api/health", timeout=3)
             if response.status_code == 200:
-                logger.info(f"Found healthy Panel server already running on port {self.port}")
-                return True
+                if self.process is not None and self.process.poll() is None:
+                    # We own this process — it is still running from this session.
+                    logger.info(f"Found healthy Panel server already running on port {self.port}")
+                    return True
+                # Healthy but unowned — orphan from a previous MCP session (e.g. the
+                # MCP server was killed with SIGTERM/SIGKILL before atexit could run).
+                # Kill it so we start fresh with the current code.
+                logger.info(f"Found orphaned Panel server on port {self.port} (not owned by this session) — " "stopping it to ensure current code is loaded.")
+                stale_pid = self._find_pid_on_port()
+                if stale_pid:
+                    import os
+                    import signal as _signal
+
+                    try:
+                        os.kill(stale_pid, _signal.SIGTERM)
+                        for _ in range(10):
+                            time.sleep(0.5)
+                            if not self._is_port_in_use():
+                                logger.info(f"Orphaned Panel server (PID {stale_pid}) stopped.")
+                                return False
+                        os.kill(stale_pid, _signal.SIGKILL)
+                        time.sleep(1)
+                    except ProcessLookupError:
+                        pass  # Already gone
+                    except PermissionError:
+                        logger.error(f"No permission to kill orphaned process (PID {stale_pid})")
+                        return True  # Can't replace it; adopt as fallback
+                return False
         except requests.RequestException:
             pass
 

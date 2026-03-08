@@ -498,7 +498,9 @@ class SnippetDatabase:
             raise ValueError(err)
 
         # Layer 4 — Panel extension availability (raises ExtensionError)
-        validate_extension_availability(app)
+        # jupyter method auto-injects extensions at render time; only enforce for panel.
+        if method == "panel":
+            validate_extension_availability(app)
 
         # Format before storage and runtime execution
         app = ruff_format(app)

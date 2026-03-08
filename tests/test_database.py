@@ -158,3 +158,27 @@ class TestSnippetDatabase:
                 app="print('hello')",
                 method="invalid",  # type: ignore[arg-type]
             )
+
+    def test_jupyter_method_skips_extension_validation(self, temp_db):
+        """Code that triggers extension detection must not raise for method='jupyter'.
+
+        find_extensions() matches on substrings, so a comment containing 'plotly'
+        is enough to trigger the extension check without importing the package.
+        """
+        # This would raise ExtensionError if validate_extension_availability ran for jupyter.
+        snippet = temp_db.create_visualization(
+            app="x = 1  # plotly visualization",
+            method="jupyter",
+        )
+        assert snippet.method == "jupyter"
+        assert "plotly" in snippet.extensions
+
+    def test_panel_method_still_enforces_extension_validation(self, temp_db):
+        """Same code must raise ExtensionError for method='panel'."""
+        from panel_live_server.utils import ExtensionError
+
+        with pytest.raises(ExtensionError, match="plotly"):
+            temp_db.create_visualization(
+                app="x = 1  # plotly visualization",
+                method="panel",
+            )

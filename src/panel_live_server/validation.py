@@ -17,6 +17,8 @@ import logging
 import subprocess
 import sys
 
+from fastmcp.exceptions import ToolError
+
 logger = logging.getLogger(__name__)
 
 _RUFF_TIMEOUT_SECONDS = 5
@@ -46,8 +48,23 @@ IMPORT_TO_PACKAGE: dict[str, str] = {
 }
 
 
-class SecurityError(Exception):
-    """Raised when code contains security violations detected by ruff or import analysis."""
+class ValidationError(ToolError):
+    """Raised by show() when code fails a non-security validation check.
+
+    Covers syntax errors, missing packages, and missing Panel extension declarations.
+    The message always begins with the layer name in brackets, e.g.
+    ``[syntax] invalid syntax`` so the LLM can identify the failing check at a glance.
+    """
+
+
+class SecurityError(ToolError):
+    """Raised by show() when code contains a security violation.
+
+    Given a special class (separate from ValidationError) to signal seriousness —
+    security violations are never auto-fixable and should not be retried without
+    a substantive code rewrite. Particularly relevant in enterprise contexts where
+    security policy enforcement is audited.
+    """
 
 
 # Imports that are categorically blocked regardless of how they are used.
@@ -235,8 +252,10 @@ def check_packages(code: str) -> str | None:
             package_name = IMPORT_TO_PACKAGE.get(import_name, import_name)
             return (
                 f"Package '{package_name}' is not installed in this environment. "
-                f"Use the list_packages tool to discover what is available, "
-                f"then rewrite using an installed library."
+                f"Do NOT attempt to install packages or change the Python environment — "
+                f"the environment is fixed and cannot be modified. "
+                f"Call list_packages to see what IS available, "
+                f"then rewrite the code using an installed library."
             )
 
     return None
