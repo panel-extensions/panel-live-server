@@ -46,7 +46,7 @@ Start a local web server and create interactive visualizations through a browser
 Every snippet gets its own permanent URL.
 
 <video controls autoplay muted loop style="width: 100%; max-width: 100%;">
-  <source src="assets/videos/panel-live-server-showcase-mcp.mp4" type="video/mp4">
+  <source src="assets/videos/panel-live-server-showcase.mp4" type="video/mp4">
 </video>
 
 ```bash
