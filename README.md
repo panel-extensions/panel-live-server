@@ -6,10 +6,14 @@
 [![python-version](https://img.shields.io/pypi/pyversions/panel-live-server?logoColor=white&logo=python&style=flat-square)](https://pypi.org/project/panel-live-server)
 
 
-Panel Live Server is a local Panel web server that executes
+Panel Live Server is a local Panel web server and MCP server that executes
   Python code snippets and renders the resulting visualizations
   as live, interactive web pages — enabling humans and AI assistants to
   display and inspect Python outputs in real time.
+
+![panel-live-server showcase](https://raw.githubusercontent.com/panel-extensions/panel-live-server/main/docs/assets/gif/panel-live-server-showcase.gif)
+
+![panel-live-server MCP showcase](https://raw.githubusercontent.com/panel-extensions/panel-live-server/main/docs/assets/gif/panel-live-server-showcase-mcp.gif)
 
 ## Features
 

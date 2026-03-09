@@ -17,18 +17,26 @@ Give Claude, GitHub Copilot, or any MCP-compatible AI assistant the ability to r
 visualizations directly in your IDE. The `validate` and `show` tools execute Python and
 return a live URL — no manual setup required.
 
-![pls mcp demo](assets/images/pls-mcp.gif)
+<video controls autoplay muted loop style="width: 100%; max-width: 100%;">
+  <source src="assets/videos/panel-live-server-showcase-mcp.mp4" type="video/mp4">
+</video>
 
 ```bash
-pls mcp
+uv tool install panel-live-server[pydata]
+pls mcp # configure this command in Claude, Copilot etc.
 ```
 
-The Panel server starts automatically. Ask your AI assistant:
+Ask your AI assistant:
 
-> Plot the penguins dataset. Show the distribution of species as an interactive bar chart.
+> Please show a quick and beautiful Matplotlib trading dashboard
 
-The AI calls `validate` to check the code, then `show` to render it — the visualization
-appears immediately.
+> Please show a basic, interactive Panel app with a slider.
+
+> Now replace the text with a hvplot and show it.
+
+> Please show the most beautiful matplotlib plot
+
+The AI calls `show` to render it — the visualization appears immediately in your chat interface.
 
 ---
 
@@ -37,11 +45,13 @@ appears immediately.
 Start a local web server and create interactive visualizations through a browser UI or REST API.
 Every snippet gets its own permanent URL.
 
-![pls serve demo](assets/images/pls-serve.gif)
+<video controls autoplay muted loop style="width: 100%; max-width: 100%;">
+  <source src="assets/videos/panel-live-server-showcase-mcp.mp4" type="video/mp4">
+</video>
 
 ```bash
-pip install panel-live-server
-pls serve
+uv tool install panel-live-server[pydata]
+pls serve # run this command in the terminal
 ```
 
 Open [http://localhost:5077/add](http://localhost:5077/add) and submit any Python visualization:

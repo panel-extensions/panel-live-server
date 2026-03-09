@@ -29,19 +29,75 @@ async def test_list_tools():
 
 @pytest.mark.asyncio
 async def test_packages_tool_returns_list():
-    """Test packages tool returns a non-empty sorted list with name/version dicts."""
+    """Test packages tool returns a non-empty sorted list of core package names."""
     client = Client(mcp)
     async with client:
         result = await client.call_tool("list_packages", {})
         pkgs = json.loads(result.content[0].text)
         assert isinstance(pkgs, list)
         assert len(pkgs) > 0
-        assert all("name" in p and "version" in p for p in pkgs)
+        assert all(isinstance(p, str) for p in pkgs)
         # panel must be installed
-        names = [p["name"].lower() for p in pkgs]
+        names = [p.lower() for p in pkgs]
         assert any("panel" in n for n in names)
         # sorted by name (case-insensitive, hyphens == underscores)
         assert names == sorted(names, key=lambda n: n.replace("-", "_"))
+        # default is 'core' — should be a small subset, not all 170+ packages
+        assert len(pkgs) < 50
+
+
+@pytest.mark.asyncio
+async def test_packages_tool_category_visualization():
+    """Test list_packages with category='visualization' returns only viz packages."""
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("list_packages", {"category": "visualization"})
+        pkgs = json.loads(result.content[0].text)
+        assert isinstance(pkgs, list)
+        assert len(pkgs) > 0
+        # Should contain well-known viz packages that are installed
+        names = {p.lower() for p in pkgs}
+        assert "bokeh" in names or "matplotlib" in names or "panel" in names
+        # Should NOT contain non-viz packages
+        assert len(pkgs) < 50  # much smaller than the full 200+ list
+
+
+@pytest.mark.asyncio
+async def test_packages_tool_category_multiple():
+    """Test list_packages with comma-separated categories."""
+    client = Client(mcp)
+    async with client:
+        viz_result = await client.call_tool("list_packages", {"category": "visualization"})
+        data_result = await client.call_tool("list_packages", {"category": "data"})
+        both_result = await client.call_tool("list_packages", {"category": "visualization,data"})
+        viz_pkgs = json.loads(viz_result.content[0].text)
+        data_pkgs = json.loads(data_result.content[0].text)
+        both_pkgs = json.loads(both_result.content[0].text)
+        # Combined should be >= each individual
+        assert len(both_pkgs) >= len(viz_pkgs)
+        assert len(both_pkgs) >= len(data_pkgs)
+
+
+@pytest.mark.asyncio
+async def test_packages_tool_query_filter():
+    """Test list_packages with query narrows results by name substring."""
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("list_packages", {"query": "panel"})
+        pkgs = json.loads(result.content[0].text)
+        assert len(pkgs) > 0
+        assert all("panel" in p.lower() for p in pkgs)
+
+
+@pytest.mark.asyncio
+async def test_packages_tool_category_and_query():
+    """Test list_packages with both category and query."""
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("list_packages", {"category": "panel", "query": "material"})
+        pkgs = json.loads(result.content[0].text)
+        assert len(pkgs) >= 1
+        assert all("material" in p.lower() for p in pkgs)
 
 
 def test_packages_cli_lists_packages():
@@ -63,12 +119,30 @@ def test_packages_cli_filter():
 
 
 @pytest.mark.asyncio
-async def test_show_returns_payload():
-    """Test show tool returns a JSON payload with expected fields (no prior validate needed)."""
+async def test_show_returns_payload_quick():
+    """Test show(quick=True) returns a JSON payload with expected fields."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     code = "import panel as pn\npn.pane.Markdown('Hello').servable()"
     client = Client(mcp)
     async with client:
+        result = await client.call_tool("show", {"code": code, "method": "panel", "quick": True})
+        text = result.content[0].text
+        payload = json.loads(text)
+        assert payload["tool"] == "show"
+        assert "status" in payload
+        assert "url" in payload or "message" in payload
+
+
+@pytest.mark.asyncio
+async def test_show_returns_payload_after_validate():
+    """Test show(quick=False) returns a JSON payload after prior validate() call."""
+    server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
+    code = "import panel as pn\npn.pane.Markdown('Hello').servable()"
+    client = Client(mcp)
+    async with client:
+        await client.call_tool("validate", {"code": code, "method": "panel"})
         result = await client.call_tool("show", {"code": code, "method": "panel"})
         text = result.content[0].text
         payload = json.loads(text)
@@ -84,12 +158,38 @@ async def test_show_returns_payload():
 
 @pytest.mark.asyncio
 async def test_validate_returns_valid_for_correct_code():
-    """validate returns {"valid": true} for clean code."""
+    """validate returns {"valid": true} for clean code (including runtime execution)."""
     client = Client(mcp)
     async with client:
         result = await client.call_tool("validate", {"code": "x = 1 + 2"})
         data = json.loads(result.content[0].text)
         assert data == {"valid": True}
+
+
+@pytest.mark.asyncio
+async def test_validate_catches_runtime_error():
+    """validate catches runtime errors (e.g. ValueError, TypeError) via code execution."""
+    client = Client(mcp)
+    async with client:
+        # This code is syntactically valid and passes static checks,
+        # but raises ValueError at runtime
+        result = await client.call_tool("validate", {"code": "int('not_a_number')"})
+        data = json.loads(result.content[0].text)
+        assert data["valid"] is False
+        assert data["layer"] == "runtime"
+        assert "ValueError" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_validate_catches_attribute_error():
+    """validate catches AttributeError at runtime."""
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("validate", {"code": "x = [1, 2, 3]\nx.nonexistent_method()"})
+        data = json.loads(result.content[0].text)
+        assert data["valid"] is False
+        assert data["layer"] == "runtime"
+        assert "AttributeError" in data["message"]
 
 
 @pytest.mark.asyncio
@@ -207,47 +307,43 @@ def test_security_error_is_tool_error_subclass():
 
 
 @pytest.mark.asyncio
-async def test_show_raises_validation_error_on_syntax_error():
-    """show raises ValidationError([syntax]) for syntax errors — no App pane opened.
-
-    FastMCP serializes ToolError subclasses to ToolError over the transport;
-    the [syntax] prefix in the message is the distinguishing signal.
-    """
+async def test_show_quick_raises_validation_error_on_syntax_error():
+    """show(quick=True) raises ValidationError([syntax]) for syntax errors."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         with pytest.raises(ToolError, match=r"\[syntax\]"):
-            await client.call_tool("show", {"code": "def bad syntax"})
+            await client.call_tool("show", {"code": "def bad syntax", "quick": True})
 
 
 @pytest.mark.asyncio
-async def test_show_raises_security_error_on_blocked_import():
-    """show raises SecurityError for blocked imports — distinct from ValidationError.
-
-    FastMCP serializes to ToolError over the transport; the absence of a [layer]
-    prefix (SecurityError has no bracket prefix) marks it as a security violation.
-    """
+async def test_show_quick_raises_security_error_on_blocked_import():
+    """show(quick=True) raises SecurityError for blocked imports."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         with pytest.raises(ToolError, match="pickle"):
-            await client.call_tool("show", {"code": "import pickle\npickle.dumps({})"})
+            await client.call_tool("show", {"code": "import pickle\npickle.dumps({})", "quick": True})
 
 
 @pytest.mark.asyncio
-async def test_show_raises_validation_error_on_missing_package():
-    """show raises ValidationError([packages]) for missing packages."""
+async def test_show_quick_raises_validation_error_on_missing_package():
+    """show(quick=True) raises ValidationError([packages]) for missing packages."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         with pytest.raises(ToolError, match=r"\[packages\]"):
-            await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc"})
+            await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc", "quick": True})
 
 
 @pytest.mark.asyncio
 async def test_show_raises_tool_error_when_server_not_running():
     """show raises ToolError when the Panel server client is None (valid code)."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         # Override _client after the lifespan has set it, to simulate server absence.
@@ -255,7 +351,7 @@ async def test_show_raises_tool_error_when_server_not_running():
         server_module._client = None
         try:
             with pytest.raises(ToolError):
-                await client.call_tool("show", {"code": "x = 1"})
+                await client.call_tool("show", {"code": "x = 1", "quick": True})
         finally:
             server_module._client = saved
 
@@ -266,6 +362,7 @@ async def test_show_caches_validation_and_reuses_on_show():
     from unittest.mock import patch
 
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
 
     call_count = {"n": 0}
     original_ast_check = server_module.ast_check
@@ -278,35 +375,63 @@ async def test_show_caches_validation_and_reuses_on_show():
     with patch.object(server_module, "ast_check", side_effect=counting_ast_check):
         client = Client(mcp)
         async with client:
-            # First call: validate populates the cache.
+            # First call: validate populates the cache + _fully_validated.
             await client.call_tool("validate", {"code": code})
             # Second call: show hits the cache — ast_check not called again.
-            # show will then proceed and succeed (Panel server is running via lifespan).
             await client.call_tool("show", {"code": code, "method": "jupyter"})
 
     assert call_count["n"] == 1, "ast_check should be called exactly once (cached on second call)"
 
 
 # ---------------------------------------------------------------------------
-# show one-shot: works without a prior validate() call
+# show quick=True: works without a prior validate() call
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_show_works_without_prior_validate():
-    """show succeeds as a one-shot call — no prior validate() required."""
+async def test_show_quick_works_without_prior_validate():
+    """show(quick=True) succeeds as a one-shot call — no prior validate() required."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
-        result = await client.call_tool("show", {"code": "x = 1", "method": "jupyter"})
+        result = await client.call_tool("show", {"code": "x = 1", "method": "jupyter", "quick": True})
         payload = json.loads(result.content[0].text)
         assert payload["status"] == "success"
 
 
 @pytest.mark.asyncio
-async def test_show_reuses_cache_when_validate_called_first():
-    """show reuses the cached validate() result — no double-validation."""
+async def test_show_quick_catches_runtime_error():
+    """show(quick=True) raises ValidationError([runtime]) for runtime failures."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
+    client = Client(mcp)
+    async with client:
+        with pytest.raises(ToolError, match=r"\[runtime\]"):
+            await client.call_tool("show", {"code": "int('not_a_number')", "quick": True})
+
+
+# ---------------------------------------------------------------------------
+# show quick=False (default): requires prior validate() call
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_show_default_raises_without_prior_validate():
+    """show(quick=False) raises ValidationError if validate() was not called first."""
+    server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
+    client = Client(mcp)
+    async with client:
+        with pytest.raises(ToolError, match="not been validated"):
+            await client.call_tool("show", {"code": "x = 1", "method": "jupyter"})
+
+
+@pytest.mark.asyncio
+async def test_show_default_succeeds_after_validate():
+    """show(quick=False) succeeds when validate() was called first."""
+    server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         await client.call_tool("validate", {"code": "x = 1", "method": "jupyter"})
@@ -316,13 +441,14 @@ async def test_show_reuses_cache_when_validate_called_first():
 
 
 @pytest.mark.asyncio
-async def test_show_raises_validation_error_for_missing_extension_panel_method():
-    """show raises ValidationError([extensions]) for missing pn.extension() (panel method)."""
+async def test_show_quick_raises_validation_error_for_missing_extension_panel_method():
+    """show(quick=True) raises ValidationError([extensions]) for missing pn.extension()."""
     server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         with pytest.raises(ToolError, match=r"\[extensions\]"):
             await client.call_tool(
                 "show",
-                {"code": "x = 1  # plotly visualization", "method": "panel"},
+                {"code": "x = 1  # plotly visualization", "method": "panel", "quick": True},
             )

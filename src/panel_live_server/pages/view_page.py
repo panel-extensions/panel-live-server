@@ -121,7 +121,10 @@ def _execute_code(snippet: Snippet) -> pn.viewable.Viewable | None:
     pn.viewable.Viewable
         Panel component with result
     """
-    module_name = f"pls_snippet_{snippet.id.replace('-', '_')}"
+    # Use a bokeh_app_ prefix so pn.state.served returns True inside
+    # the executed snippet, allowing ``if pn.state.served:`` guards and
+    # ``.servable()`` calls to work correctly.
+    module_name = f"bokeh_app_pls_snippet_{snippet.id.replace('-', '_')}"
 
     preamble = "import panel as pn\n\npn.config.design = None\n\n"
 

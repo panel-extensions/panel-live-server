@@ -97,6 +97,15 @@ class TestUtils:
         result = validate_code(code)
         assert "NameError" in result
 
+    def test_validate_code_pn_state_served_is_true(self):
+        """Test that pn.state.served is True during validation so errors inside
+        ``if pn.state.served:`` blocks are caught."""
+        from panel_live_server.utils import validate_code
+
+        code = "import panel as pn\nif pn.state.served:\n    raise RuntimeError('served block executed')\n"
+        result = validate_code(code)
+        assert "served block executed" in result
+
 
 class TestExecuteInModule:
     """Tests for execute_in_module utility."""
