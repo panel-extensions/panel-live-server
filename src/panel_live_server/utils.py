@@ -175,7 +175,7 @@ def validate_extension_availability(code: str) -> None:
         missing_sorted = sorted(missing)
         missing_args = ", ".join(f"'{ext}'" for ext in missing_sorted)
         missing_list = ", ".join(f"'{ext}'" for ext in missing_sorted)
-        raise ExtensionError(f"Required Panel extension(s) not loaded: {missing_list}. " f"Add pn.extension({missing_args}) to your code.")
+        raise ExtensionError(f"Required Panel extension(s) not loaded: {missing_list}. Add pn.extension({missing_args}) to your code.")
 
 
 def find_requirements(code: str) -> list[str]:
@@ -339,7 +339,9 @@ def get_relative_view_url(id: str) -> str:
 def _run_execution(code: str) -> str:
     """Execute *code* in an isolated module namespace. Returns error string or ``""``."""
     try:
-        execute_in_module(code, module_name="_code_validation", cleanup=True)
+        # Use a bokeh_app_ prefix so pn.state.served returns True during
+        # validation, allowing ``if pn.state.served:`` blocks to be exercised.
+        execute_in_module(code, module_name="bokeh_app_validation", cleanup=True)
         return ""
     except Exception as e:
         tb = e.__traceback__.tb_next if e.__traceback__ is not None else None

@@ -168,6 +168,43 @@
       @keyframes spin {
         to { transform: rotate(360deg); }
       }
+
+      /* Error panel — shown instead of iframe when validation fails */
+      .error-panel {
+        display: none;
+        position: absolute;
+        inset: 0;
+        border: 1px solid rgba(192, 57, 43, 0.3);
+        border-radius: 8px;
+        background: rgba(192, 57, 43, 0.04);
+        padding: 24px;
+        overflow: auto;
+        box-sizing: border-box;
+      }
+
+      .error-panel .error-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #c0392b;
+      }
+
+      .error-panel .error-body {
+        font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+        font-size: 0.82rem;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: inherit;
+        opacity: 0.85;
+      }
+
+      .error-panel.visible {
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -188,6 +225,10 @@
           <div class="spinner"></div>
           <span>Loading visualization…</span>
         </div>
+        <div id="error-panel" class="error-panel">
+          <div class="error-header">✗ Validation Error</div>
+          <div id="error-body" class="error-body"></div>
+        </div>
         <iframe id="view" src="about:blank" title="show preview"></iframe>
       </div>
     </div>
@@ -198,6 +239,8 @@
       const messageEl = document.getElementById("message");
       const iframe = document.getElementById("view");
       const loadingOverlay = document.getElementById("loading-overlay");
+      const errorPanel = document.getElementById("error-panel");
+      const errorBody = document.getElementById("error-body");
       const copyCodeButton = document.getElementById("copy-code");
       const shareUrlButton  = document.getElementById("share-url");
       const zoomButtons = [
@@ -358,8 +401,10 @@
           currentCode = "";
         }
 
-        // Load iframe (show loading overlay + start timeout fallback)
+        // Load iframe or show error panel
         if (currentUrl) {
+          errorPanel.classList.remove("visible");
+          iframe.style.display = "";
           loadingOverlay.classList.remove("hidden", "blocked");
           loadingOverlay.innerHTML =
             '<div class="spinner"></div><span>Loading visualization…</span>';
@@ -368,6 +413,30 @@
         } else {
           hideSpinner();
           iframe.src = "about:blank";
+          iframe.style.display = "none";
+
+          // Determine error text from parsed payload or raw text
+          const errorText = (parsedPayload && parsedPayload.status === "error")
+            ? (parsedPayload.error_message || parsedPayload.message || rawText)
+            : rawText;
+
+          // Classify the error for the header
+          const lower = errorText.toLowerCase();
+          const headerText = lower.includes("security") || lower.includes("blocked")
+            ? "✗ Security Error"
+            : lower.includes("syntax")
+              ? "✗ Syntax Error"
+              : lower.includes("package")
+                ? "✗ Package Error"
+                : lower.includes("extension")
+                  ? "✗ Extension Error"
+                  : lower.includes("runtime")
+                    ? "✗ Runtime Error"
+                    : "✗ Validation Error";
+
+          errorPanel.querySelector(".error-header").textContent = headerText;
+          errorBody.textContent = errorText;
+          errorPanel.classList.add("visible");
         }
       };
 
