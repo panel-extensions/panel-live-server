@@ -121,7 +121,7 @@ def _raise_validation_error(validation: dict) -> None:
 
 
 def _externalize_url(url: str) -> str:
-    """Convert local URLs to externally reachable proxy/Codespaces URLs."""
+    """Convert local URLs to externally reachable URLs using config.external_url."""
     if not url:
         return url
 
@@ -131,22 +131,13 @@ def _externalize_url(url: str) -> str:
     if host not in {"localhost", "127.0.0.1"}:
         return url
 
-    port = parsed.port
-    if not port:
+    external_url = get_config().external_url
+    if not external_url:
         return url
 
-    config = get_config()
-
-    proxy_base = os.getenv("JUPYTER_SERVER_PROXY_URL") or config.jupyter_server_proxy_url
-    if proxy_base:
-        return f"{proxy_base.rstrip('/')}/{port}{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
-
-    codespace_name = os.getenv("CODESPACE_NAME")
-    if codespace_name:
-        forwarding_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
-        return f"https://{codespace_name}-{port}.{forwarding_domain}{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
-
-    return url
+    path = parsed.path or ""
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{external_url.rstrip('/')}{path}{query}"
 
 
 def _start_panel_server() -> tuple[PanelServerManager | None, DisplayClient | None]:
@@ -272,6 +263,24 @@ mcp = FastMCP(
 # --- Resources ---
 
 
+def _build_frame_domains() -> list[str]:
+    """Build the CSP frame-ancestors list, adding the external origin when available."""
+    domains = [
+        "http://127.0.0.1",
+        "http://localhost",
+        "https://127.0.0.1",
+        "https://localhost",
+    ]
+    external_url = get_config().external_url
+    if external_url:
+        parsed = urlparse(external_url)
+        if parsed.hostname:
+            origin = f"{parsed.scheme}://{parsed.hostname}"
+            if origin not in domains:
+                domains.append(origin)
+    return domains
+
+
 @mcp.resource(
     SHOW_RESOURCE_URI,
     app=AppConfig(
@@ -280,14 +289,7 @@ mcp = FastMCP(
                 "'unsafe-inline'",
                 "https://unpkg.com",
             ],
-            frame_domains=[
-                "http://localhost",
-                "http://127.0.0.1",
-                "https://localhost",
-                "https://127.0.0.1",
-                "https://*.app.github.dev",
-                "https://*.github.dev",
-            ],
+            frame_domains=_build_frame_domains(),
         )
     ),
 )

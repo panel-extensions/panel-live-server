@@ -5,8 +5,8 @@ and displays the results through various endpoints.
 """
 
 import logging
-import os
 
+from panel_live_server.config import get_config
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
 
@@ -14,11 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def _display_url(address: str, port: int, endpoint: str) -> str:
-    """Generate the display server URL."""
-    proxy_url = os.getenv("JUPYTER_SERVER_PROXY_URL", None)
-    if proxy_url:
-        proxy_url = proxy_url.rstrip("/")
-        return f"{proxy_url}/{port}/{endpoint}"
+    """Generate the display server URL, externalizing when config.external_url is set."""
+    external_url = get_config().external_url
+    if external_url:
+        return f"{external_url.rstrip('/')}/{endpoint}"
     return f"http://{address}:{port}/{endpoint}"
 
 
@@ -81,7 +80,6 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
 
 if __name__ == "__main__":
     # Read config from env vars when run as subprocess
-    from panel_live_server.config import get_config
     from panel_live_server.config import reset_config
 
     reset_config()

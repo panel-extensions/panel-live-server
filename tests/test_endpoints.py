@@ -1,7 +1,6 @@
 """Tests for display REST API endpoints."""
 
 import json
-import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -92,20 +91,15 @@ class TestSnippetEndpoint(AsyncHTTPTestCase):
         assert "Unsupported execution method" in payload["message"]
 
     def test_create_snippet_uses_codespaces_url_when_available(self) -> None:
-        """POST /api/snippet should return Codespaces-forwarded URL when configured."""
+        """POST /api/snippet should return Codespaces-forwarded URL when config.external_url is set."""
         body = {
             "code": "print('hello')",
             "method": "jupyter",
         }
 
-        with patch.dict(
-            os.environ,
-            {
-                "CODESPACE_NAME": "literate-chainsaw-54wjwvrrxv4c4p5q",
-                "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
-            },
-            clear=False,
-        ):
+        fake_config = SimpleNamespace(external_url="https://literate-chainsaw-54wjwvrrxv4c4p5q-5077.app.github.dev")
+
+        with patch.object(endpoints_module, "get_config", return_value=fake_config):
             response = self.fetch(
                 "/api/snippet",
                 method="POST",
@@ -115,25 +109,18 @@ class TestSnippetEndpoint(AsyncHTTPTestCase):
 
         assert response.code == 200
         payload = json.loads(response.body.decode("utf-8"))
-        assert payload["url"].startswith("https://literate-chainsaw-54wjwvrrxv4c4p5q-")
-        assert payload["url"].endswith(".app.github.dev/view?id=snippet-123")
+        assert payload["url"] == "https://literate-chainsaw-54wjwvrrxv4c4p5q-5077.app.github.dev/view?id=snippet-123"
 
-    def test_create_snippet_jupyter_proxy_takes_precedence_over_codespaces(self) -> None:
-        """Jupyter proxy URL should take precedence when both proxy and codespaces are set."""
+    def test_create_snippet_uses_jupyter_proxy_external_url(self) -> None:
+        """POST /api/snippet should use external_url from config when set to a Jupyter proxy URL."""
         body = {
             "code": "print('hello')",
             "method": "jupyter",
         }
 
-        with patch.dict(
-            os.environ,
-            {
-                "JUPYTER_SERVER_PROXY_URL": "https://proxy.example.dev/user/foo/proxy",
-                "CODESPACE_NAME": "literate-chainsaw-54wjwvrrxv4c4p5q",
-                "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN": "app.github.dev",
-            },
-            clear=False,
-        ):
+        fake_config = SimpleNamespace(external_url="https://proxy.example.dev/user/foo/proxy/5077")
+
+        with patch.object(endpoints_module, "get_config", return_value=fake_config):
             response = self.fetch(
                 "/api/snippet",
                 method="POST",
@@ -143,28 +130,25 @@ class TestSnippetEndpoint(AsyncHTTPTestCase):
 
         assert response.code == 200
         payload = json.loads(response.body.decode("utf-8"))
-        assert payload["url"].startswith("https://proxy.example.dev/user/foo/proxy/")
-        assert payload["url"].endswith("/view?id=snippet-123")
+        assert payload["url"] == "https://proxy.example.dev/user/foo/proxy/5077/view?id=snippet-123"
 
-    def test_create_snippet_uses_configured_jupyter_proxy_when_env_missing(self) -> None:
-        """Configured jupyter_server_proxy_url should be used if env var is absent."""
+    def test_create_snippet_uses_configured_external_url(self) -> None:
+        """config.external_url should be used for URL construction when set."""
         body = {
             "code": "print('hello')",
             "method": "jupyter",
         }
 
-        fake_config = SimpleNamespace(jupyter_server_proxy_url="https://config-proxy.example.dev/user/proxy")
+        fake_config = SimpleNamespace(external_url="https://config-proxy.example.dev/user/proxy/5077")
 
-        with patch.dict(os.environ, {"JUPYTER_SERVER_PROXY_URL": "", "CODESPACE_NAME": ""}, clear=False):
-            with patch.object(endpoints_module, "get_config", return_value=fake_config):
-                response = self.fetch(
-                    "/api/snippet",
-                    method="POST",
-                    body=json.dumps(body),
-                    headers={"Content-Type": "application/json"},
-                )
+        with patch.object(endpoints_module, "get_config", return_value=fake_config):
+            response = self.fetch(
+                "/api/snippet",
+                method="POST",
+                body=json.dumps(body),
+                headers={"Content-Type": "application/json"},
+            )
 
         assert response.code == 200
         payload = json.loads(response.body.decode("utf-8"))
-        assert payload["url"].startswith("https://config-proxy.example.dev/user/proxy/")
-        assert payload["url"].endswith("/view?id=snippet-123")
+        assert payload["url"] == "https://config-proxy.example.dev/user/proxy/5077/view?id=snippet-123"

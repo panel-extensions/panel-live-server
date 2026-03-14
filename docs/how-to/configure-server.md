@@ -110,13 +110,40 @@ separately.
 ## Jupyter and Remote Development Environments
 
 In Jupyter environments (JupyterHub, VS Code Dev Containers, GitHub Codespaces), Panel Live Server
-automatically detects the proxy URL and externalizes visualization URLs so they are accessible
+automatically detects the external URL and externalizes visualization URLs so they are accessible
 from your browser.
 
-Set the Jupyter Server Proxy URL if it is not detected automatically:
+The following environment variables are detected automatically (in priority order):
+
+| Variable(s) | Environment |
+|---|---|
+| `PANEL_LIVE_SERVER_EXTERNAL_URL` | Any — explicit port-inclusive override |
+| `JUPYTERHUB_HOST` + `JUPYTERHUB_SERVICE_PREFIX` | JupyterHub with [jupyter-server-proxy](https://jupyter-server-proxy.readthedocs.io/) |
+| `CODESPACE_NAME` + `GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` | GitHub Codespaces |
+
+In a JupyterHub deployment with jupyter-server-proxy, `JUPYTERHUB_SERVICE_PREFIX` is set
+automatically by JupyterHub. However, `JUPYTERHUB_HOST` is **only** set automatically in
+subdomain-based routing mode. In the more common path-based routing mode, you must set it
+manually, for example in your MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "panel-live-server": {
+      "command": "pls",
+      "args": ["mcp"],
+      "env": {
+        "JUPYTERHUB_HOST": "https://your-hub.example.com"
+      }
+    }
+  }
+}
+```
+
+Alternatively, set the full URL explicitly:
 
 ```bash
-export JUPYTER_SERVER_PROXY_URL="https://your-proxy-url/proxy/5077"
+export PANEL_LIVE_SERVER_EXTERNAL_URL="https://your-hub/user/you/proxy/5077"
 pls mcp
 ```
 

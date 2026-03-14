@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from panel_live_server.client import DisplayClient
+from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
 
 
@@ -184,8 +185,8 @@ arr.mean()
         url = manager.get_base_url()
 
         # Should be localhost for testing
-        if os.getenv("JUPYTER_SERVER_PROXY_URL"):
-            assert os.getenv("JUPYTER_SERVER_PROXY_URL") in url
+        if get_config().external_url:
+            assert get_config().external_url in url
         else:
             assert "127.0.0.1" in url or "localhost" in url
         assert "5006" in url  # Test port

@@ -91,7 +91,7 @@ src/panel_live_server/
 | `PANEL_LIVE_SERVER_HOST` | `localhost` | Panel server host |
 | `PANEL_LIVE_SERVER_DB_PATH` | `~/.panel-live-server/snippets/snippets.db` | SQLite database path |
 | `PANEL_LIVE_SERVER_MAX_RESTARTS` | `3` | Max automatic restarts on failure |
-| `JUPYTER_SERVER_PROXY_URL` | — | Set in Jupyter environments for URL forwarding |
+| `PANEL_LIVE_SERVER_EXTERNAL_URL` | — | Explicit external URL override (port-inclusive). Auto-detected from `JUPYTERHUB_HOST`+`JUPYTERHUB_SERVICE_PREFIX` (JupyterHub) or `CODESPACE_NAME`/`GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` (Codespaces) if not set. |
 
 ## MCP Tools
 
