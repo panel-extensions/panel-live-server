@@ -1,10 +1,11 @@
-"""Tests for panel_live_server.validation (Layers 1–3 + formatting)."""
+"""Tests for panel_live_server.validation (Layers 1–3b + formatting)."""
 
 import pytest
 
 from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ast_check
 from panel_live_server.validation import check_packages
+from panel_live_server.validation import check_panel_api
 from panel_live_server.validation import ruff_check
 from panel_live_server.validation import ruff_format
 
@@ -193,6 +194,64 @@ class TestCheckPackages:
         result = check_packages("import panel\nimport _fake_xyz_abc")
         assert result is not None
         assert "_fake_xyz_abc" in result
+
+
+# ---------------------------------------------------------------------------
+# Layer 3b: check_panel_api
+# ---------------------------------------------------------------------------
+
+
+class TestCheckPanelApi:
+    def test_valid_code_returns_none(self):
+        assert check_panel_api("x = 1") is None
+
+    def test_pn_alias_on_session_created(self):
+        code = "import panel as pn\npn.state.on_session_created(cb)"
+        result = check_panel_api(code)
+        assert result is not None
+        assert "on_session_created" in result
+
+    def test_pn_alias_on_session_created_line_number(self):
+        code = "import panel as pn\npn.state.on_session_created(cb)"
+        result = check_panel_api(code)
+        assert result is not None
+        assert "line 2" in result
+
+    def test_panel_alias_on_session_created(self):
+        code = "import panel\npanel.state.on_session_created(cb)"
+        result = check_panel_api(code)
+        assert result is not None
+        assert "on_session_created" in result
+
+    def test_error_message_suggests_alternative(self):
+        code = "import panel as pn\npn.state.on_session_created(cb)"
+        result = check_panel_api(code)
+        assert result is not None
+        assert "onload" in result
+
+    def test_pn_state_onload_passes(self):
+        assert check_panel_api("import panel as pn\npn.state.onload(cb)") is None
+
+    def test_pn_state_other_method_passes(self):
+        assert check_panel_api("import panel as pn\npn.state.cache['key'] = 1") is None
+
+    def test_lambda_callback_detected(self):
+        code = "import panel as pn\npn.state.on_session_created(lambda ctx: None)"
+        result = check_panel_api(code)
+        assert result is not None
+        assert "on_session_created" in result
+
+    def test_syntax_error_returns_none(self):
+        """Invalid syntax should not raise — Layer 1 handles that."""
+        assert check_panel_api("def foo(\n    pass") is None
+
+    def test_other_pn_state_nested_call_passes(self):
+        code = "import panel as pn\npn.state.schedule_task('name', cb, period=5)"
+        assert check_panel_api(code) is None
+
+    def test_arbitrary_name_not_flagged(self):
+        """Only 'pn' and 'panel' root names are checked."""
+        assert check_panel_api("p.state.on_session_created(cb)") is None
 
 
 # ---------------------------------------------------------------------------

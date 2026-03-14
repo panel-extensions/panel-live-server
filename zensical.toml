@@ -12,6 +12,9 @@ nav = [
     {"Standalone Server" = "tutorials/standalone-server.md"},
     {"MCP Server" = "tutorials/mcp-server.md"}
   ]},
+  {"Examples" = [
+    {"Github Copilot" = "examples/github-copilot.md"}
+   ]},
   {"How-to Guides" = [
     {"Configure the Server" = "how-to/configure-server.md"}
   ]},
@@ -20,7 +23,7 @@ nav = [
   ]},
   {"Reference" = [
     {"API Reference" = "reference/panel_live_server.md"},
-    {"Examples" = "examples.md"}
+    {"Examples MCP" = "examples-mcp.md"}
   ]}
 ]
 

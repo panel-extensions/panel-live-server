@@ -1,11 +1,12 @@
 """Code validation pipeline for panel-live-server.
 
-Provides four static validation layers that run before code is stored:
+Provides five static validation layers that run before code is stored:
 
-- Layer 1  ``ast_check``       — syntax via ``ast.parse()``
-- Layer 2  ``ruff_check``      — security rules via ``ruff`` (raises ``SecurityError``)
-- Layer 3  ``check_packages``  — all imports are installed
-- Formatting  ``ruff_format``  — autoformat via ``ruff format``
+- Layer 1  ``ast_check``         — syntax via ``ast.parse()``
+- Layer 2  ``ruff_check``        — security rules via ``ruff`` (raises ``SecurityError``)
+- Layer 3  ``check_packages``    — all imports are installed
+- Layer 3b ``check_panel_api``   — Panel API compatibility check
+- Formatting  ``ruff_format``    — autoformat via ``ruff format``
 
 Runtime execution (Layer 5) lives in ``utils.validate_code``.
 """
@@ -258,6 +259,58 @@ def check_packages(code: str) -> str | None:
                 f"then rewrite the code using an installed library."
             )
 
+    return None
+
+
+def check_panel_api(code: str) -> str | None:
+    r"""Return an error string if *code* uses Panel APIs incompatible with snippet execution.
+
+    Currently checks for:
+
+    - ``pn.state.on_session_created`` / ``panel.state.on_session_created``:
+      session hooks are never invoked in the single-snippet execution context
+      used by panel-live-server; the callback will silently never run.
+
+    Parameters
+    ----------
+    code : str
+        Python source to analyse.
+
+    Returns
+    -------
+    str | None
+        Human-readable error string, or ``None`` if the code is compatible.
+
+    Examples
+    --------
+    >>> check_panel_api("x = 1")
+    >>> check_panel_api("import panel as pn\npn.state.on_session_created(cb)")
+    "line 2: 'pn.state.on_session_created' is not supported ..."
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None  # Layer 1 handles syntax errors
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "on_session_created"
+            and isinstance(func.value, ast.Attribute)
+            and func.value.attr == "state"
+            and isinstance(func.value.value, ast.Name)
+            and func.value.value.id in ("pn", "panel")
+        ):
+            return (
+                f"line {node.lineno}: 'pn.state.on_session_created' is not supported "
+                "in panel-live-server snippets. Session hooks are only invoked when "
+                "Panel manages a full Bokeh server session, which does not happen in "
+                "the single-snippet execution context here. "
+                "Use pn.state.onload or a periodic callback instead."
+            )
     return None
 
 

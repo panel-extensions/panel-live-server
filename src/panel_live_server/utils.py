@@ -1,6 +1,7 @@
 """Utilities for inferring required packages and Panel extensions from code."""
 
 import ast
+import asyncio
 import concurrent.futures
 import importlib.util
 import logging
@@ -338,10 +339,19 @@ def get_relative_view_url(id: str) -> str:
 
 def _run_execution(code: str) -> str:
     """Execute *code* in an isolated module namespace. Returns error string or ``""``."""
-    try:
+
+    async def _run() -> None:
         # Use a bokeh_app_ prefix so pn.state.served returns True during
         # validation, allowing ``if pn.state.served:`` blocks to be exercised.
         execute_in_module(code, module_name="bokeh_app_validation", cleanup=True)
+
+    try:
+        # Run inside asyncio.run() so that APIs such as
+        # pn.state.add_periodic_callback(start=True) can call
+        # asyncio.create_task() without raising "no running event loop".
+        # Tasks scheduled during execution are cancelled and the loop is
+        # closed automatically when _run() returns.
+        asyncio.run(_run())
         return ""
     except Exception as e:
         tb = e.__traceback__.tb_next if e.__traceback__ is not None else None

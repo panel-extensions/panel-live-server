@@ -31,6 +31,7 @@ from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ValidationError
 from panel_live_server.validation import ast_check
 from panel_live_server.validation import check_packages
+from panel_live_server.validation import check_panel_api
 from panel_live_server.validation import ruff_check
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def _run_validation(code: str, method: str) -> dict:
     1. Syntax — ``ast.parse``
     2. Security — ruff rules + blocked-import list
     3. Package availability — all imports must be installed
+    3b. Panel API compatibility — flags unsupported APIs (e.g. ``pn.state.on_session_created``)
     4. Panel extensions — declared via ``pn.extension()`` (``panel`` method only)
 
     Parameters
@@ -91,6 +93,10 @@ def _run_validation(code: str, method: str) -> dict:
         if err := check_packages(code):
             result = {"valid": False, "layer": "packages", "message": err}
 
+    if not result:
+        if err := check_panel_api(code):
+            result = {"valid": False, "layer": "api", "message": err}
+
     if not result and method == "panel":
         try:
             validate_extension_availability(code)
@@ -116,6 +122,8 @@ def _raise_validation_error(validation: dict) -> None:
         raise ValidationError(f"[packages] {message}")
     elif layer == "extensions":
         raise ValidationError(f"[extensions] {message}\nAdd the missing pn.extension(...) call to your code.")
+    elif layer == "api":
+        raise ValidationError(f"[api] {message}")
     else:
         raise ValidationError(message)
 
@@ -233,19 +241,51 @@ mcp = FastMCP(
         "Panel Live Server executes Python code snippets and renders the resulting "
         "visualizations as live, interactive web pages.\n\n"
         "WORKFLOWS — choose one based on complexity:\n\n"
-        "QUICK (simple plots): Call `show(code, name, quick=True)`. "
-        "Runs full validation inline and renders in one step. "
-        "Use for straightforward plots with well-known libraries.\n\n"
-        "STANDARD (complex apps / unfamiliar code):\n"
+        "STANDARD (DEFAULT — use for nearly everything):\n"
         "1. DISCOVER: Call `list_packages()` (once per session) to see what Python "
         "   packages are installed. The environment is fixed and cannot be modified. "
         "   By default it returns the ~30 core visualization, data, and panel packages.\n"
-        "2. VALIDATE: Call `validate(code, method)` before `show`. "
+        "2. SKILLS: Before designing or writing any code, identify and load relevant skills. "
+        "   Based on the task and the libraries you plan to use, load applicable skills:\n"
+        "   - System skills (e.g. panel, hvplot, holoviews, param, panel-holoviews, "
+        "     panel-material-ui, panel-custom-components) — invoke via the Skill tool.\n"
+        "   - holoviz MCP server (if connected) — call `mcp__holoviz__skill_list` to "
+        "     discover available skills, then `mcp__holoviz__skill_get` to fetch the "
+        "     relevant ones.\n"
+        "3. RESEARCH: Use holoviz MCP tools (if connected) to find solutions, recipes, "
+        "   and component details relevant to the task. Determine which tools apply:\n"
+        "   - `mcp__holoviz__search` — search for solutions, ideas, and recipes.\n"
+        "   - Panel components: `mcp__holoviz__pn_search` / `pn_list` / `pn_get` / `pn_params`\n"
+        "   - hvPlot: `mcp__holoviz__hvplot_list` / `hvplot_get`\n"
+        "   - HoloViews: `mcp__holoviz__hv_list` / `hv_get`\n"
+        "   - Docs / reference: `mcp__holoviz__doc_get` / `ref_get`\n"
+        "   Do this BEFORE designing or writing any visualization code.\n\n"
+        "MANDATORY: Do NOT write, design, or validate any code until you have completed "
+        "steps 1–3. Skipping SKILLS or RESEARCH is never acceptable, even if you believe "
+        "you already know the answer. Your training data may be outdated — the HoloViz "
+        "ecosystem evolves rapidly and component APIs, recommended patterns, and best "
+        "practices change frequently. SKILLS and RESEARCH ensure your code uses current "
+        "APIs, not deprecated patterns.\n\n"
+        "Before calling `validate()`, confirm you have:\n"
+        "- Called `list_packages()` this session\n"
+        "- Loaded at least one relevant skill via `skill_get`\n"
+        "- Called at least one research tool (`search`, `pn_search`, `pn_get`, `hvplot_get`, etc.)\n\n"
+        "4. VALIDATE: Call `validate(code, method)` before `show`. "
         "   It runs static checks AND executes the code to catch runtime errors. "
         '   Fix any issues and re-validate until it returns `{"valid": true}`. '
         "   Results are cached — `show` reuses them with zero overhead.\n"
-        "3. SHOW: Call `show(code, name, description, method, zoom)` to render. "
-        "   `show` will raise an error if `validate()` was not called first.\n\n"
+        "5. SHOW: Call `show(code, name, description, method, zoom)` to render. "
+        "   `show` raises an error if `validate()` was not called first.\n\n"
+        "QUICK (trivial plots only): Call `show(code, name, quick=True)`. "
+        "Runs validation inline — no prior `validate()` call needed. "
+        "No SKILLS or RESEARCH step needed for trivial plots. "
+        "Use ONLY when ALL of the following are true: "
+        "(a) a single bare plot call (e.g. `df.hvplot.line()`) with no layout, "
+        "(b) no or minimal data transformations, "
+        "(c) no Panel widgets, layouts, or templates, "
+        "(d) no custom classes or complex logic, "
+        "(e) no filtering, interactivity, or multi-chart composition. "
+        "If in doubt, use STANDARD.\n\n"
         "LIBRARY SELECTION (prefer in this order when suitable):\n"
         "- hvPlot: quick interactive plots from DataFrames (.plot API)\n"
         "- HoloViews: advanced composable, interactive visualizations\n"
@@ -460,7 +500,7 @@ async def validate(
         ``{"valid": True}`` on success, or
         ``{"valid": False, "layer": "...", "message": "..."}`` describing the
         first failing check. Layers: ``"syntax"``, ``"security"``,
-        ``"packages"``, ``"extensions"``, ``"runtime"``.
+        ``"packages"``, ``"api"``, ``"extensions"``, ``"runtime"``.
     """
     from panel_live_server.utils import validate_code
 
@@ -493,12 +533,20 @@ async def show(
 
     Two usage modes:
 
-    - **Quick** (``quick=True``): one-shot — runs full validation (static +
-      runtime) inline. No prior ``validate()`` call needed. Ideal for simple
-      plots with well-known libraries.
-    - **Standard** (``quick=False``, default): expects ``validate(code, method)``
-      to have been called first. ``show`` reuses the cached static validation
-      with zero overhead.
+    - **Standard** (``quick=False``, default — use for nearly everything):
+      Before writing code: (1) load relevant skills (panel, hvplot, holoviews,
+      etc.) via the Skill tool or holoviz MCP server; (2) use holoviz MCP tools
+      (``mcp__holoviz__search``, component lookups such as ``pn_get``,
+      ``hvplot_get``, ``hv_get``) to find solutions and recipes.
+      Then call ``validate(code, method)`` before ``show``.
+      ``show`` reuses the cached validation result with zero overhead.
+      Use for any code with data transformations, Panel widgets or layouts,
+      custom classes, or unfamiliar libraries.
+    - **Quick** (``quick=True`` — trivial plots only): runs full validation
+      (static + runtime) inline. No prior ``validate()`` call needed.
+      Use ONLY for a single, well-known plot call with no or minimal data
+      transformations, no Panel widgets or layouts, and no custom logic.
+      If in doubt, use Standard.
 
     In both modes, validation failures raise ``SecurityError`` or
     ``ValidationError`` — the MCP App is only returned on success.
@@ -542,7 +590,10 @@ async def show(
     quick : bool, default False
         If ``True``, run full validation (static checks + runtime execution)
         inline before rendering — no prior ``validate()`` call needed.
-        Use for simple, well-known visualizations to save a round-trip.
+        Use ONLY for trivial plots: a single, well-known plot call with no or
+        minimal data transformations, no Panel widgets or layouts, and no
+        custom classes. For anything else, call ``validate()`` first (Standard
+        mode), which is the default and recommended workflow.
 
     Returns
     -------

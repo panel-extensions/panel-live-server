@@ -106,6 +106,22 @@ class TestUtils:
         result = validate_code(code)
         assert "served block executed" in result
 
+    def test_validate_code_add_periodic_callback_start_true(self):
+        """pn.state.add_periodic_callback(start=True) must not raise RuntimeError
+        during validation. It calls asyncio.create_task() which requires a running
+        event loop — validate_code must provide one."""
+        from panel_live_server.utils import validate_code
+
+        code = (
+            "import panel as pn\n"
+            "pn.extension()\n"
+            "def update(): pass\n"
+            "pn.state.add_periodic_callback(update, period=500, start=True)\n"
+            "pn.Column().servable()\n"
+        )
+        result = validate_code(code)
+        assert result == "", f"Expected no error, got: {result}"
+
 
 class TestExecuteInModule:
     """Tests for execute_in_module utility."""
