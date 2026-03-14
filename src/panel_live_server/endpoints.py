@@ -6,7 +6,6 @@ HTTP endpoints for creating visualizations and checking server health.
 
 import json
 import logging
-import os
 import traceback
 from datetime import datetime
 from datetime import timezone
@@ -23,28 +22,13 @@ logger = logging.getLogger(__name__)
 def _get_external_base_url(request_host: str) -> str | None:
     """Get external base URL for links returned to clients.
 
-    Priority order:
-    1. Jupyter server proxy URL
-    2. GitHub Codespaces forwarded URL
-    3. None (caller should fall back to request URL)
+    Returns ``config.external_url`` when set (auto-detected from environment),
+    otherwise ``None`` (caller should fall back to the request URL).
     """
-    jupyter_base = os.getenv("JUPYTER_SERVER_PROXY_URL")
-    if not jupyter_base:
-        try:
-            jupyter_base = get_config().jupyter_server_proxy_url
-        except Exception:
-            jupyter_base = ""
-
-    if jupyter_base:
-        port = request_host.split(":")[-1]
-        return f"{jupyter_base.rstrip('/')}/{port}"
-
-    if codespace_name := os.getenv("CODESPACE_NAME"):
-        port = request_host.split(":")[-1]
-        forwarding_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
-        return f"https://{codespace_name}-{port}.{forwarding_domain}"
-
-    return None
+    try:
+        return get_config().external_url or None
+    except Exception:
+        return None
 
 
 class SnippetEndpoint(RequestHandler):

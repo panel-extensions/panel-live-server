@@ -163,6 +163,8 @@ def ruff_check(code: str) -> None:
     try:
         result = subprocess.run(  # noqa: S603
             [
+                sys.executable,
+                "-m",
                 "ruff",
                 "check",
                 "--select",
@@ -185,6 +187,10 @@ def ruff_check(code: str) -> None:
         return
     except subprocess.TimeoutExpired:
         logger.warning("ruff timed out after %ss — security check skipped", _RUFF_TIMEOUT_SECONDS)
+        return
+
+    if "No module named ruff" in (result.stderr or ""):
+        logger.warning("ruff not found — security check skipped")
         return
 
     if result.returncode == 0 or not result.stdout.strip():
@@ -283,7 +289,7 @@ def ruff_format(code: str) -> str:
     """
     try:
         result = subprocess.run(  # noqa: S603
-            ["ruff", "format", "--stdin-filename", "snippet.py", "-"],  # noqa: S607
+            [sys.executable, "-m", "ruff", "format", "--stdin-filename", "snippet.py", "-"],  # noqa: S603 S607
             capture_output=True,
             text=True,
             input=code,
