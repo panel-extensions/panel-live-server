@@ -7,12 +7,13 @@ from types import SimpleNamespace
 import pytest
 
 import panel_live_server.manager as manager_module
-from panel_live_server.manager import PanelServerManager, _force_kill_pid
-
+from panel_live_server.manager import PanelServerManager
+from panel_live_server.manager import _force_kill_pid
 
 # ---------------------------------------------------------------------------
 # Shared fake-psutil helpers
 # ---------------------------------------------------------------------------
+
 
 class FakeNoSuchProcess(Exception):
     pass
@@ -61,8 +62,8 @@ def _patch_psutil(monkeypatch):
 # _force_kill_pid
 # ---------------------------------------------------------------------------
 
-class TestForceKillPid:
 
+class TestForceKillPid:
     def test_returns_true_on_success(self, _patch_psutil):
         _patch_psutil()
         assert _force_kill_pid(1234) is True
@@ -83,6 +84,7 @@ class TestForceKillPid:
 # ---------------------------------------------------------------------------
 # PanelServerManager._build_subprocess_env
 # ---------------------------------------------------------------------------
+
 
 def test_build_subprocess_env_prepends_environment_paths(monkeypatch, tmp_path):
     """Subprocess env should include environment DLL paths before PATH."""
@@ -122,6 +124,7 @@ def test_build_subprocess_env_prepends_environment_paths(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 # PanelServerManager._try_recover_stale_server
 # ---------------------------------------------------------------------------
+
 
 def test_try_recover_stale_orphan_handles_no_such_process(monkeypatch, tmp_path, _patch_psutil):
     """NoSuchProcess during force-kill should be treated as already gone."""

@@ -11,6 +11,7 @@ from typing import Annotated
 # activate the environment, so we fix it up here before any heavy imports.
 if sys.platform == "win32":
     from panel_live_server.utils import prepend_env_dll_paths
+
     prepend_env_dll_paths(os.environ)
 
 import typer

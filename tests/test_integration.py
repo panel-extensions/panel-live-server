@@ -8,7 +8,6 @@ HTTP handling. These tests are marked as slow/integration and may be skipped
 in CI. The core functionality (database, utils, UI pages) is fully tested.
 """
 
-import os
 import tempfile
 import time
 from pathlib import Path
