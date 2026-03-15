@@ -74,7 +74,7 @@ class TestPrependEnvDllPaths:
             handles_by_path[path] = handle
             return handle
 
-        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory)
+        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory, raising=False)
         monkeypatch.setattr(utils_module, "_DLL_DIR_HANDLES", {})
 
         env = {"PATH": "existing-path"}
@@ -102,7 +102,7 @@ class TestPrependEnvDllPaths:
             call_count["value"] += 1
             return object()
 
-        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory)
+        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory, raising=False)
         monkeypatch.setattr(utils_module, "_DLL_DIR_HANDLES", {})
 
         env = {"PATH": "existing-path"}
@@ -126,7 +126,7 @@ class TestPrependEnvDllPaths:
         def _fake_add_dll_directory(path: str) -> object:
             raise OSError("boom")
 
-        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory)
+        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory, raising=False)
         monkeypatch.setattr(utils_module, "_DLL_DIR_HANDLES", {})
 
         env = {"PATH": "existing-path"}

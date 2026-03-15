@@ -53,6 +53,7 @@ def prepend_env_dll_paths(env: dict[str, str]) -> dict[str, str]:
     if sys.platform != "win32":
         return env
 
+    # Assumes conda/pixi layout where python.exe is at the environment root.
     env_root = Path(sys.executable).resolve().parent
     candidate_dirs = [
         env_root,

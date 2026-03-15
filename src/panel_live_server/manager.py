@@ -6,16 +6,34 @@ startup, health checks, and shutdown.
 
 import logging
 import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+import psutil
 import requests  # type: ignore[import-untyped]
 
 from panel_live_server.utils import prepend_env_dll_paths
 
 logger = logging.getLogger(__name__)
+
+
+def _force_kill_pid(pid: int) -> bool:
+    """Force-kill a process by PID using psutil (cross-platform).
+
+    Returns True if the process was killed or already gone, False if
+    we lack permission.
+    """
+    try:
+        psutil.Process(pid).kill()
+    except psutil.NoSuchProcess:
+        pass  # Already gone (ZombieProcess is a subclass, also caught here)
+    except psutil.AccessDenied:
+        logger.error(f"No permission to force-kill process (PID {pid})")
+        return False
+    return True
 
 
 class PanelServerManager:
@@ -65,16 +83,13 @@ class PanelServerManager:
 
     def _log_startup_failure(self) -> None:
         """Log subprocess exit details when startup fails early."""
-        if self.process is None:
-            return
+        if self.process is None or self.process.poll() is None:
+            return  # Still running or no process — nothing to report
 
+        returncode = self.process.returncode
         try:
             stdout, stderr = self.process.communicate(timeout=1)
         except subprocess.TimeoutExpired:
-            return
-
-        returncode = self.process.returncode
-        if returncode is None:
             return
 
         logger.error(f"Panel server exited during startup with return code {returncode} (0x{returncode & 0xFFFFFFFF:08X})")
@@ -123,27 +138,16 @@ class PanelServerManager:
                 logger.info(f"Found orphaned Panel server on port {self.port} (not owned by this session) — " "stopping it to ensure current code is loaded.")
                 stale_pid = self._find_pid_on_port()
                 if stale_pid:
-                    import os
-                    import signal as _signal
-
                     try:
-                        os.kill(stale_pid, _signal.SIGTERM)
+                        os.kill(stale_pid, signal.SIGTERM)
                         for _ in range(10):
                             time.sleep(0.5)
                             if not self._is_port_in_use():
                                 logger.info(f"Orphaned Panel server (PID {stale_pid}) stopped.")
                                 return False
-                        # SIGKILL is Unix-only; use psutil for cross-platform force-kill
-                        import psutil
-                        try:
-                            psutil.Process(stale_pid).kill()
-                        except psutil.NoSuchProcess:
-                            pass
-                        except psutil.ZombieProcess:
-                            pass
-                        except psutil.AccessDenied:
-                            logger.error(f"No permission to force-kill orphaned process (PID {stale_pid})")
-                            return True  # Can't replace it; adopt as fallback
+                        if not _force_kill_pid(stale_pid):
+                            logger.warning(f"Cannot replace orphaned process (PID {stale_pid}), adopting it")
+                            return True
                         time.sleep(1)
                     except ProcessLookupError:
                         pass  # Already gone
@@ -158,9 +162,6 @@ class PanelServerManager:
         logger.warning(f"Port {self.port} is occupied by an unresponsive process, attempting cleanup")
         stale_pid = self._find_pid_on_port()
         if stale_pid:
-            import os
-            import signal
-
             logger.info(f"Killing stale Panel server process (PID {stale_pid})")
             try:
                 os.kill(stale_pid, signal.SIGTERM)
@@ -169,17 +170,8 @@ class PanelServerManager:
                     if not self._is_port_in_use():
                         logger.info(f"Stale process (PID {stale_pid}) cleaned up successfully")
                         return False
-                # SIGKILL is Unix-only; use psutil for cross-platform force-kill
-                import psutil
-                try:
-                    psutil.Process(stale_pid).kill()
-                except psutil.NoSuchProcess:
-                    pass
-                except psutil.ZombieProcess:
-                    pass
-                except psutil.AccessDenied:
-                    logger.error(f"No permission to force-kill stale process (PID {stale_pid})")
-                    return False
+                if not _force_kill_pid(stale_pid):
+                    return False  # Can't free the port
                 time.sleep(1)
             except ProcessLookupError:
                 pass  # Already dead
@@ -199,12 +191,10 @@ class PanelServerManager:
         Uses psutil for cross-platform compatibility.
         """
         try:
-            import psutil
-
             for conn in psutil.net_connections(kind="tcp"):
                 if conn.laddr.port == self.port and conn.status == psutil.CONN_LISTEN:
                     return conn.pid
-        except (ImportError, psutil.AccessDenied):
+        except psutil.AccessDenied:
             pass
         return None
 
