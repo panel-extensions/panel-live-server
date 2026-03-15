@@ -19,7 +19,9 @@ def _resolve_external_url(port: int) -> str:
 
     Checks in priority order:
     1. ``PANEL_LIVE_SERVER_EXTERNAL_URL``                          — explicit override (port-inclusive).
-    2. ``JUPYTERHUB_HOST`` + ``JUPYTERHUB_SERVICE_PREFIX``         — JupyterHub with jupyter-server-proxy. Note: ``JUPYTERHUB_SERVICE_PREFIX`` is set automatically by JupyterHub, but ``JUPYTERHUB_HOST`` is only set automatically in subdomain routing mode and must be supplied manually in path-based routing.
+    2. ``JUPYTERHUB_HOST`` + ``JUPYTERHUB_SERVICE_PREFIX``         — JupyterHub with jupyter-server-proxy.
+       Note: ``JUPYTERHUB_SERVICE_PREFIX`` is set automatically by JupyterHub, but ``JUPYTERHUB_HOST`` is
+       only set automatically in subdomain routing mode and must be supplied manually in path-based routing.
     3. ``CODESPACE_NAME``                                          — GitHub Codespaces port-forwarding URL.
     4. ``""``                                                      — local; callers fall back to ``http://localhost:{port}``.
     """

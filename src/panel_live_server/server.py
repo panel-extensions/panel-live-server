@@ -264,18 +264,22 @@ mcp = FastMCP(
 
 
 def _build_frame_domains() -> list[str]:
-    """Build the CSP frame-ancestors list, adding the external origin when available."""
+    """Build the CSP frame-src list, adding the Panel server port and external origin."""
+    config = get_config()
+    port = config.port
     domains = [
-        "http://127.0.0.1",
-        "http://localhost",
-        "https://127.0.0.1",
-        "https://localhost",
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"https://127.0.0.1:{port}",
+        f"https://localhost:{port}",
     ]
-    external_url = get_config().external_url
+    external_url = config.external_url
     if external_url:
         parsed = urlparse(external_url)
         if parsed.hostname:
             origin = f"{parsed.scheme}://{parsed.hostname}"
+            if parsed.port:
+                origin += f":{parsed.port}"
             if origin not in domains:
                 domains.append(origin)
     return domains

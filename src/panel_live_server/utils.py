@@ -4,17 +4,83 @@ import ast
 import concurrent.futures
 import importlib.util
 import logging
+import os
 import sys
 import traceback
 import types
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _EXECUTION_TIMEOUT = 30  # seconds
 
+# Keep os.add_dll_directory handles alive for process lifetime on Windows.
+_DLL_DIR_HANDLES: dict[str, Any] = {}
+
 # Check for pandas availability once at module level
 _PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
+
+
+def prepend_env_dll_paths(env: dict[str, str]) -> dict[str, str]:
+    """Prepend conda/pixi environment DLL directories to ``env["PATH"]``.
+
+    On Windows, compiled extensions such as numpy require
+    ``<env>/Library/bin`` and ``<env>/DLLs`` to be on PATH so Windows can
+    locate the native DLLs at import time.  These entries are added
+    automatically when a shell activates the environment (e.g. via
+    ``conda activate`` or ``pixi run``), but external launchers such as
+    MCP clients typically do not activate the environment.
+
+    This function is idempotent: if the entries are already present in
+    ``env["PATH"]`` they are not duplicated.
+
+    It operates on any ``str → str`` mapping so it can patch both
+    ``os.environ`` (for the current process) and a freshly copied dict
+    (for a subprocess ``env=`` argument).
+
+    Parameters
+    ----------
+    env : dict[str, str]
+        Environment mapping to update in-place.  Normally ``os.environ``
+        or a copy of it.
+
+    Returns
+    -------
+    dict[str, str]
+        The same *env* mapping, updated in-place (returned for convenience).
+    """
+    if sys.platform != "win32":
+        return env
+
+    # Assumes conda/pixi layout where python.exe is at the environment root.
+    env_root = Path(sys.executable).resolve().parent
+    candidate_dirs = [
+        env_root,
+        env_root / "Scripts",
+        env_root / "Library" / "bin",
+        env_root / "DLLs",
+    ]
+
+    existing_path = env.get("PATH", "")
+    existing_entries: set[str] = set(existing_path.split(os.pathsep)) if existing_path else set()
+
+    new_prefixes = [str(d) for d in candidate_dirs if d.exists() and str(d) not in existing_entries]
+    if new_prefixes:
+        env["PATH"] = os.pathsep.join(new_prefixes + ([existing_path] if existing_path else []))
+
+    # Python 3.8+ explicit DLL search path (independent of PATH).
+    add_dll = getattr(os, "add_dll_directory", None)
+    if add_dll is not None:
+        for d in candidate_dirs:
+            resolved = str(d.resolve())
+            if d.exists() and resolved not in _DLL_DIR_HANDLES:
+                try:
+                    _DLL_DIR_HANDLES[resolved] = add_dll(str(d))
+                except OSError:
+                    pass
+
+    return env
 
 
 def find_extensions(code: str, namespace: dict[str, Any] | None = None) -> list[str]:

@@ -283,9 +283,9 @@
         loadingOverlay.classList.remove("hidden");
         loadingOverlay.classList.add("blocked");
         loadingOverlay.innerHTML =
-          '<span style="font-size:0.85rem;opacity:0.7">Visualization may require sign-in to view inline.</span>' +
+          '<span style="font-size:0.85rem;opacity:0.8;text-align:center;max-width:34rem">Inline preview was blocked by the host app. Some MCP clients, including Claude Desktop, restrict iframe origins with Content Security Policy and will not embed <code>localhost</code> pages.</span>' +
           (currentUrl
-            ? `<a href="${currentUrl}" target="_blank" rel="noopener" style="font-size:0.85rem;color:inherit;text-decoration:underline;text-underline-offset:2px">Open in browser ↗</a>`
+            ? `<a href="${currentUrl}" target="_blank" rel="noopener" style="font-size:0.85rem;color:inherit;text-decoration:underline;text-underline-offset:2px">Open visualization in browser ↗</a>`
             : "");
       }
 
@@ -296,7 +296,8 @@
         }
       });
 
-      // Fallback: if load never fires within 10s, show "open in browser" prompt
+      // Fallback: if load never fires within 10s, assume the host blocked iframe
+      // embedding (commonly due to CSP restrictions on localhost origins).
       function startLoadTimer() {
         clearTimeout(loadTimer);
         loadTimer = setTimeout(showBlockedFallback, 10_000);

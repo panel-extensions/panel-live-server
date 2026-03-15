@@ -5,14 +5,35 @@ startup, health checks, and shutdown.
 """
 
 import logging
+import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+import psutil
 import requests  # type: ignore[import-untyped]
 
+from panel_live_server.utils import prepend_env_dll_paths
+
 logger = logging.getLogger(__name__)
+
+
+def _force_kill_pid(pid: int) -> bool:
+    """Force-kill a process by PID using psutil (cross-platform).
+
+    Returns True if the process was killed or already gone, False if
+    we lack permission.
+    """
+    try:
+        psutil.Process(pid).kill()
+    except psutil.NoSuchProcess:
+        pass  # Already gone (ZombieProcess is a subclass, also caught here)
+    except psutil.AccessDenied:
+        logger.error(f"No permission to force-kill process (PID {pid})")
+        return False
+    return True
 
 
 class PanelServerManager:
@@ -44,6 +65,38 @@ class PanelServerManager:
         self.max_restarts = max_restarts
         self.process: subprocess.Popen | None = None
         self.restart_count = 0
+
+    def _build_subprocess_env(self) -> dict[str, str]:
+        """Build the environment for the Panel subprocess.
+
+        On Windows, compiled packages such as numpy may require additional DLL
+        directories from the active environment to be present on PATH. This can
+        be missing when ``pls mcp`` is launched by external MCP clients rather
+        than from an activated shell.
+        """
+        env = os.environ.copy()
+        env["PANEL_LIVE_SERVER_DB_PATH"] = str(self.db_path)
+        env["PANEL_LIVE_SERVER_PORT"] = str(self.port)
+        env["PANEL_LIVE_SERVER_HOST"] = self.host
+        prepend_env_dll_paths(env)
+        return env
+
+    def _log_startup_failure(self) -> None:
+        """Log subprocess exit details when startup fails early."""
+        if self.process is None or self.process.poll() is None:
+            return  # Still running or no process — nothing to report
+
+        returncode = self.process.returncode
+        try:
+            stdout, stderr = self.process.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            return
+
+        logger.error(f"Panel server exited during startup with return code {returncode} (0x{returncode & 0xFFFFFFFF:08X})")
+        if stdout.strip():
+            logger.error(f"Panel server stdout:\n{stdout}")
+        if stderr.strip():
+            logger.error(f"Panel server stderr:\n{stderr}")
 
     def _is_port_in_use(self) -> bool:
         """Check if the configured port is already in use."""
@@ -85,17 +138,16 @@ class PanelServerManager:
                 logger.info(f"Found orphaned Panel server on port {self.port} (not owned by this session) — " "stopping it to ensure current code is loaded.")
                 stale_pid = self._find_pid_on_port()
                 if stale_pid:
-                    import os
-                    import signal as _signal
-
                     try:
-                        os.kill(stale_pid, _signal.SIGTERM)
+                        os.kill(stale_pid, signal.SIGTERM)
                         for _ in range(10):
                             time.sleep(0.5)
                             if not self._is_port_in_use():
                                 logger.info(f"Orphaned Panel server (PID {stale_pid}) stopped.")
                                 return False
-                        os.kill(stale_pid, _signal.SIGKILL)
+                        if not _force_kill_pid(stale_pid):
+                            logger.warning(f"Cannot replace orphaned process (PID {stale_pid}), adopting it")
+                            return True
                         time.sleep(1)
                     except ProcessLookupError:
                         pass  # Already gone
@@ -110,9 +162,6 @@ class PanelServerManager:
         logger.warning(f"Port {self.port} is occupied by an unresponsive process, attempting cleanup")
         stale_pid = self._find_pid_on_port()
         if stale_pid:
-            import os
-            import signal
-
             logger.info(f"Killing stale Panel server process (PID {stale_pid})")
             try:
                 os.kill(stale_pid, signal.SIGTERM)
@@ -121,7 +170,8 @@ class PanelServerManager:
                     if not self._is_port_in_use():
                         logger.info(f"Stale process (PID {stale_pid}) cleaned up successfully")
                         return False
-                os.kill(stale_pid, signal.SIGKILL)
+                if not _force_kill_pid(stale_pid):
+                    return False  # Can't free the port
                 time.sleep(1)
             except ProcessLookupError:
                 pass  # Already dead
@@ -141,12 +191,10 @@ class PanelServerManager:
         Uses psutil for cross-platform compatibility.
         """
         try:
-            import psutil
-
             for conn in psutil.net_connections(kind="tcp"):
                 if conn.laddr.port == self.port and conn.status == psutil.CONN_LISTEN:
                     return conn.pid
-        except (ImportError, psutil.AccessDenied):
+        except psutil.AccessDenied:
             pass
         return None
 
@@ -177,12 +225,7 @@ class PanelServerManager:
             app_path = Path(__file__).parent / "app.py"
 
             # Set up environment — use PANEL_LIVE_SERVER_* vars to match get_config()
-            import os
-
-            env = os.environ.copy()
-            env["PANEL_LIVE_SERVER_DB_PATH"] = str(self.db_path)
-            env["PANEL_LIVE_SERVER_PORT"] = str(self.port)
-            env["PANEL_LIVE_SERVER_HOST"] = self.host
+            env = self._build_subprocess_env()
 
             logger.info(f"Using database at: {env['PANEL_LIVE_SERVER_DB_PATH']}")
 
@@ -194,6 +237,7 @@ class PanelServerManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
             )
 
             # Wait for server to be ready
@@ -239,6 +283,7 @@ class PanelServerManager:
             # Check if process died
             if self.process and self.process.poll() is not None:
                 logger.error("Panel server process died during startup")
+                self._log_startup_failure()
                 return False
 
             time.sleep(interval)

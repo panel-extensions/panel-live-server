@@ -94,6 +94,11 @@ class TestRuffCheck:
             ruff_check('exec("x")')
         assert "line" in str(exc_info.value)
 
+    def test_unicode_source_passes(self):
+        """Unicode characters should not fail subprocess stdin encoding on Windows."""
+        code = 'title = "▲ Market"\nprint(title)'
+        assert ruff_check(code) is None
+
     # Blocked imports — caught by AST scan, not ruff
     def test_import_pickle_blocked(self):
         with pytest.raises(SecurityError, match="pickle"):
@@ -214,3 +219,9 @@ class TestRuffFormat:
     def test_returns_original_on_syntax_error(self):
         broken = "def foo(\n    pass"
         assert ruff_format(broken) == broken
+
+    def test_formats_unicode_source_without_encoding_error(self):
+        code = 'title="▲ Market"\nprint(title)'
+        result = ruff_format(code)
+        assert "▲" in result
+        assert isinstance(result, str)

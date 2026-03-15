@@ -38,6 +38,12 @@ asked an AI to produce a chart and seen it rendered live in your IDE.
 
     Restart Claude Desktop.
 
+    !!! note
+        Claude Desktop may block inline MCP App previews that iframe `http://localhost:5077/...`.
+        This is enforced by Claude Desktop's own Content Security Policy, not by Panel Live Server.
+        In that case the `show` tool still succeeds and you can open the returned visualization URL
+        in your browser.
+
 === "VS Code (MCP extension)"
 
     Add to your `.vscode/mcp.json`:
@@ -86,6 +92,10 @@ View at: http://localhost:5077/view?id=...
 ```
 
 Click the URL (or the inline MCP App panel if your client supports it) to see the chart.
+
+!!! note
+    Inline preview support depends on the MCP client. Some clients permit the embedded iframe,
+    while others block `localhost` origins and require opening the visualization in your browser.
 
 !!! tip "Prompting tips"
     Mentioning the `show` tool explicitly ("use the show tool") ensures the AI uses it rather
@@ -173,6 +183,18 @@ The error message is returned to the AI. Ask it to fix the issue — it has the 
 Or start with a simpler snippet to confirm the server is working:
 
 > Show `1 + 1` using the show tool.
+
+### Claude Desktop Not Showing the Visualization
+
+If Claude Desktop logs an error in the client console like:
+
+```text
+Framing 'http://localhost:5077/' violates the following Content Security Policy directive: "frame-src 'self' blob: data:".
+```
+
+then the visualization URL is valid, but Claude Desktop refused to embed it inline. This is a
+Claude Desktop host restriction on iframe origins. Open the returned `http://localhost:5077/view?id=...`
+URL in your browser instead.
 
 ### Package not found in server environment
 
