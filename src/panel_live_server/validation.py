@@ -178,6 +178,7 @@ def ruff_check(code: str) -> None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             input=code,
             timeout=_RUFF_TIMEOUT_SECONDS,
             check=False,
@@ -292,6 +293,7 @@ def ruff_format(code: str) -> str:
             [sys.executable, "-m", "ruff", "format", "--stdin-filename", "snippet.py", "-"],  # noqa: S603 S607
             capture_output=True,
             text=True,
+            encoding="utf-8",
             input=code,
             timeout=_RUFF_TIMEOUT_SECONDS,
             check=False,

@@ -1,7 +1,17 @@
 """CLI for Panel Live Server."""
 
 import logging
+import os
+import sys
 from typing import Annotated
+
+# On Windows, conda/pixi environments require Library/bin and DLLs on PATH so
+# that native extensions (numpy, panel, etc.) can find their DLLs at import
+# time. MCP clients that launch pls directly (not via `pixi run`) don't
+# activate the environment, so we fix it up here before any heavy imports.
+if sys.platform == "win32":
+    from panel_live_server.utils import prepend_env_dll_paths
+    prepend_env_dll_paths(os.environ)
 
 import typer
 

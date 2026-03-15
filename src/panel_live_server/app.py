@@ -5,6 +5,7 @@ and displays the results through various endpoints.
 """
 
 import logging
+from urllib.parse import urlparse
 
 from panel_live_server.config import get_config
 from panel_live_server.endpoints import HealthEndpoint
@@ -24,6 +25,38 @@ def _display_url(address: str, port: int, endpoint: str) -> str:
 def _api_url(address: str, port: int, endpoint: str) -> str:
     """Generate the API URL for a given endpoint."""
     return f"http://{address}:{port}{endpoint}"
+
+
+def _build_websocket_origins(address: str, port: int) -> list[str]:
+    """Build a targeted websocket origin allowlist for Bokeh/Panel.
+
+    Bokeh expects origins as host[:port] values. We include local defaults,
+    the configured bind address, and (when configured) the externally reachable
+    host from ``external_url``.
+    """
+    origins: set[str] = {
+        f"localhost:{port}",
+        f"127.0.0.1:{port}",
+    }
+
+    # Add the configured bind address when it is a concrete host.
+    if address and address not in {"0.0.0.0", "::"}:
+        origins.add(f"{address}:{port}")
+
+    external_url = get_config().external_url
+    if external_url:
+        parsed = urlparse(external_url)
+        if parsed.hostname:
+            if parsed.port:
+                origins.add(f"{parsed.hostname}:{parsed.port}")
+            else:
+                origins.add(parsed.hostname)
+                if parsed.scheme == "https":
+                    origins.add(f"{parsed.hostname}:443")
+                elif parsed.scheme == "http":
+                    origins.add(f"{parsed.hostname}:80")
+
+    return sorted(origins)
 
 
 def main(address: str = "localhost", port: int = 5077, show: bool = True) -> None:
@@ -75,6 +108,7 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
         show=show,
         title="Panel Live Server",
         extra_patterns=extra_patterns,
+        websocket_origin=_build_websocket_origins(address=address, port=port),
     )
 
 

@@ -1,15 +1,153 @@
 """Tests for display utilities."""
 
+import os
 import sys
 
 import pytest
 
+import panel_live_server.utils as utils_module
 from panel_live_server.utils import ExtensionError
 from panel_live_server.utils import execute_in_module
 from panel_live_server.utils import extract_last_expression
 from panel_live_server.utils import find_extensions
 from panel_live_server.utils import find_requirements
+from panel_live_server.utils import prepend_env_dll_paths
 from panel_live_server.utils import validate_extension_availability
+
+
+class TestPrependEnvDllPaths:
+    """Tests for prepend_env_dll_paths."""
+
+    def test_prepends_existing_dirs_on_windows(self, tmp_path, monkeypatch):
+        """On win32, known env dirs that exist should be prepended to PATH."""
+        env_root = tmp_path / "env"
+        scripts_dir = env_root / "Scripts"
+        library_bin_dir = env_root / "Library" / "bin"
+        dlls_dir = env_root / "DLLs"
+        for d in (scripts_dir, library_bin_dir, dlls_dir):
+            d.mkdir(parents=True)
+        python_exe = env_root / "python.exe"
+        python_exe.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(sys, "executable", str(python_exe))
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        env = {"PATH": "existing-path"}
+        prepend_env_dll_paths(env)
+
+        entries = env["PATH"].split(os.pathsep)
+        assert entries[:4] == [str(env_root), str(scripts_dir), str(library_bin_dir), str(dlls_dir)]
+        assert entries[-1] == "existing-path"
+
+    def test_idempotent_on_windows(self, tmp_path, monkeypatch):
+        """Calling twice should not duplicate entries."""
+        env_root = tmp_path / "env"
+        scripts_dir = env_root / "Scripts"
+        scripts_dir.mkdir(parents=True)
+        python_exe = env_root / "python.exe"
+        python_exe.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(sys, "executable", str(python_exe))
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        env = {"PATH": "existing-path"}
+        prepend_env_dll_paths(env)
+        path_after_first = env["PATH"]
+        prepend_env_dll_paths(env)
+        assert env["PATH"] == path_after_first
+
+    def test_retains_add_dll_directory_handles(self, tmp_path, monkeypatch):
+        """Successful add_dll_directory handles should be retained globally."""
+        env_root = tmp_path / "env"
+        scripts_dir = env_root / "Scripts"
+        scripts_dir.mkdir(parents=True)
+        python_exe = env_root / "python.exe"
+        python_exe.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(sys, "executable", str(python_exe))
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        handles_by_path: dict[str, object] = {}
+
+        def _fake_add_dll_directory(path: str) -> object:
+            handle = object()
+            handles_by_path[path] = handle
+            return handle
+
+        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory)
+        monkeypatch.setattr(utils_module, "_DLL_DIR_HANDLES", {})
+
+        env = {"PATH": "existing-path"}
+        prepend_env_dll_paths(env)
+        retained = utils_module._DLL_DIR_HANDLES.copy()
+
+        assert retained
+        for path, handle in handles_by_path.items():
+            assert retained[path] is handle
+
+    def test_add_dll_directory_is_idempotent(self, tmp_path, monkeypatch):
+        """add_dll_directory should not be called again for already-registered dirs."""
+        env_root = tmp_path / "env"
+        scripts_dir = env_root / "Scripts"
+        scripts_dir.mkdir(parents=True)
+        python_exe = env_root / "python.exe"
+        python_exe.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(sys, "executable", str(python_exe))
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        call_count = {"value": 0}
+
+        def _fake_add_dll_directory(path: str) -> object:
+            call_count["value"] += 1
+            return object()
+
+        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory)
+        monkeypatch.setattr(utils_module, "_DLL_DIR_HANDLES", {})
+
+        env = {"PATH": "existing-path"}
+        prepend_env_dll_paths(env)
+        first_count = call_count["value"]
+        prepend_env_dll_paths(env)
+
+        assert call_count["value"] == first_count
+
+    def test_add_dll_directory_ignores_oserror(self, tmp_path, monkeypatch):
+        """An OSError from one directory should not abort PATH updates."""
+        env_root = tmp_path / "env"
+        scripts_dir = env_root / "Scripts"
+        scripts_dir.mkdir(parents=True)
+        python_exe = env_root / "python.exe"
+        python_exe.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(sys, "executable", str(python_exe))
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        def _fake_add_dll_directory(path: str) -> object:
+            raise OSError("boom")
+
+        monkeypatch.setattr(os, "add_dll_directory", _fake_add_dll_directory)
+        monkeypatch.setattr(utils_module, "_DLL_DIR_HANDLES", {})
+
+        env = {"PATH": "existing-path"}
+        prepend_env_dll_paths(env)
+
+        assert str(env_root) in env["PATH"]
+        assert str(scripts_dir) in env["PATH"]
+
+    def test_noop_on_non_windows(self, monkeypatch, tmp_path):
+        """On non-Windows platforms the function should leave PATH unchanged."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        env = {"PATH": "some-path"}
+        prepend_env_dll_paths(env)
+        assert env["PATH"] == "some-path"
+
+    def test_returns_env_dict(self, monkeypatch):
+        """Should return the same dict it was passed."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        env = {"PATH": "x"}
+        result = prepend_env_dll_paths(env)
+        assert result is env
 
 
 class TestUtils:
