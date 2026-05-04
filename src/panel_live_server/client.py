@@ -95,6 +95,37 @@ class DisplayClient:
             logger.exception(f"Error creating visualization: {e}")
             raise RuntimeError(f"Failed to create visualization: {e}") from e
 
+    def get_embed_html(self, snippet_id: str) -> str | None:
+        """Fetch static embeddable HTML for a snippet.
+
+        Calls ``/api/embed?id=...`` on the Panel server which renders the
+        snippet to a self-contained HTML page using CDN resources, suitable
+        for ``<iframe srcdoc="...">``.
+
+        Parameters
+        ----------
+        snippet_id : str
+            ID of the snippet to embed.
+
+        Returns
+        -------
+        str | None
+            HTML string on success, ``None`` on any failure (logged as warning).
+        """
+        try:
+            response = self.session.get(
+                f"{self.base_url}/api/embed",
+                params={"id": snippet_id},
+                timeout=self.timeout,
+            )
+            if response.status_code == 200 and "text/html" in response.headers.get("Content-Type", ""):
+                return response.text
+            logger.warning("Embed endpoint returned status %s for snippet %s", response.status_code, snippet_id)
+            return None
+        except requests.RequestException as e:
+            logger.warning("Failed to fetch embed HTML for snippet %s: %s", snippet_id, e)
+            return None
+
     def close(self) -> None:
         """Close the HTTP session and cleanup resources."""
         if self.session:

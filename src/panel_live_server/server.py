@@ -285,15 +285,51 @@ def _build_frame_domains() -> list[str]:
     return domains
 
 
+def _build_connect_domains() -> list[str]:
+    """Build the CSP connect-src list for fetch/XHR/WebSocket to the Panel server."""
+    config = get_config()
+    port = config.port
+    domains = [
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"ws://127.0.0.1:{port}",
+        f"ws://localhost:{port}",
+    ]
+    external_url = config.external_url
+    if external_url:
+        parsed = urlparse(external_url)
+        if parsed.hostname:
+            for scheme in ("http", "https", "ws", "wss"):
+                origin = f"{scheme}://{parsed.hostname}"
+                if parsed.port:
+                    origin += f":{parsed.port}"
+                if origin not in domains:
+                    domains.append(origin)
+    return domains
+
+
+# CDN domains used by Bokeh, Panel, Plotly, Vega, etc. when rendering
+# static HTML with resources='cdn'.  These must be in resource_domains
+# so that dynamically-inserted <script src="..."> tags are allowed by CSP.
+_CDN_DOMAINS = [
+    "https://cdn.bokeh.org",
+    "https://cdn.holoviz.org",
+    "https://cdn.jsdelivr.net",
+    "https://cdn.plot.ly",
+    "https://unpkg.com",
+]
+
+
 @mcp.resource(
     SHOW_RESOURCE_URI,
     app=AppConfig(
         csp=ResourceCSP(
             resource_domains=[
                 "'unsafe-inline'",
-                "https://unpkg.com",
+                *_CDN_DOMAINS,
+                *_build_frame_domains(),
             ],
-            frame_domains=_build_frame_domains(),
+            connect_domains=_build_connect_domains(),
         )
     ),
 )
@@ -607,6 +643,7 @@ async def show(
             method=method,
         )
         url = _externalize_url(response.get("url", ""))
+        snippet_id = response.get("id", "")
 
         payload: dict[str, str | int] = {
             "tool": "show",
@@ -622,6 +659,15 @@ async def show(
             # Runtime error detected at storage time — raise so the LLM gets a
             # clear text error instead of a blank App pane.
             raise ToolError(f"Visualization created but failed at runtime:\n{error_message}\nFix the code and try again.")
+
+        # Fetch static embed HTML for direct DOM rendering (no nested iframe).
+        # Claude Desktop does not allow nested iframes; instead, the MCP App
+        # parses the static HTML from Panel's save(resources='cdn') and renders
+        # the Bokeh visualization directly in the page using resourceDomains.
+        if snippet_id and _client:
+            embed_html = await asyncio.to_thread(_client.get_embed_html, snippet_id)
+            if embed_html:
+                payload["embed_html"] = embed_html
 
         payload["status"] = "success"
         payload["message"] = "Visualization created successfully."

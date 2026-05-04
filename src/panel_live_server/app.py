@@ -8,6 +8,7 @@ import logging
 from urllib.parse import urlparse
 
 from panel_live_server.config import get_config
+from panel_live_server.endpoints import EmbedEndpoint
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
 
@@ -90,6 +91,7 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
     # Configure extra patterns for Tornado handlers (REST API endpoints)
     extra_patterns = [
         (r"/api/snippet", SnippetEndpoint),
+        (r"/api/embed", EmbedEndpoint),
         (r"/api/health", HealthEndpoint),
     ]
 
