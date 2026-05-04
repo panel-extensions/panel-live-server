@@ -110,22 +110,22 @@
         border-color: rgba(120, 120, 120, 0.7);
       }
 
-      .iframe-wrapper {
+      /* Visualization container — replaces the old iframe */
+      .viz-wrapper {
         position: relative;
         width: 100%;
         height: 100%;
         min-height: 300px;
-        overflow: hidden;
-      }
-
-      iframe {
-        width: 100%;
-        height: 100%;
+        overflow: auto;
         border: 1px solid rgba(120, 120, 120, 0.4);
         border-radius: 8px;
         background: white;
-        display: block;
+        color: #1a1a1a;
         transform-origin: top left;
+      }
+
+      .viz-wrapper > .viz-content {
+        padding: 4px;
       }
 
       /* Loading overlay */
@@ -141,11 +141,12 @@
         font-size: 0.85rem;
         opacity: 0.7;
         pointer-events: none;
+        z-index: 10;
       }
 
       .loading-overlay.hidden { display: none; }
 
-      .loading-overlay.blocked {
+      .loading-overlay.error {
         flex-direction: column;
         gap: 8px;
         opacity: 1;
@@ -153,7 +154,7 @@
         background: rgba(128, 128, 128, 0.05);
       }
 
-      .loading-overlay.blocked .spinner { display: none; }
+      .loading-overlay.error .spinner { display: none; }
 
       .spinner {
         width: 18px;
@@ -169,7 +170,7 @@
         to { transform: rotate(360deg); }
       }
 
-      /* Error panel — shown instead of iframe when validation fails */
+      /* Error panel — shown when validation fails */
       .error-panel {
         display: none;
         position: absolute;
@@ -220,7 +221,8 @@
         <button id="zoom-50"  type="button">50%</button>
         <button id="zoom-25"  type="button">25%</button>
       </div>
-      <div class="iframe-wrapper">
+
+      <div style="position:relative">
         <div id="loading-overlay" class="loading-overlay">
           <div class="spinner"></div>
           <span>Loading visualization…</span>
@@ -229,7 +231,9 @@
           <div class="error-header">✗ Validation Error</div>
           <div id="error-body" class="error-body"></div>
         </div>
-        <iframe id="view" src="about:blank" title="show preview"></iframe>
+        <div id="viz" class="viz-wrapper">
+          <div id="viz-content" class="viz-content"></div>
+        </div>
       </div>
     </div>
 
@@ -237,12 +241,13 @@
       import { App } from "https://unpkg.com/@modelcontextprotocol/ext-apps@0.4.0/app-with-deps";
 
       const messageEl = document.getElementById("message");
-      const iframe = document.getElementById("view");
+      const vizWrapper = document.getElementById("viz");
+      const vizContent = document.getElementById("viz-content");
       const loadingOverlay = document.getElementById("loading-overlay");
       const errorPanel = document.getElementById("error-panel");
       const errorBody = document.getElementById("error-body");
       const copyCodeButton = document.getElementById("copy-code");
-      const shareUrlButton  = document.getElementById("share-url");
+      const shareUrlButton = document.getElementById("share-url");
       const zoomButtons = [
         { btn: document.getElementById("zoom-100"), scale: 1    },
         { btn: document.getElementById("zoom-75"),  scale: 0.75 },
@@ -253,14 +258,14 @@
       function applyZoom(scale) {
         zoomButtons.forEach(({ btn, scale: s }) => btn.classList.toggle("zoom-active", s === scale));
         if (scale === 1) {
-          iframe.style.transform = "";
-          iframe.style.width = "";
-          iframe.style.height = "";
+          vizWrapper.style.transform = "";
+          vizWrapper.style.width = "";
+          vizWrapper.style.height = "";
         } else {
           const inv = (1 / scale * 100).toFixed(3) + "%";
-          iframe.style.transform = `scale(${scale})`;
-          iframe.style.width = inv;
-          iframe.style.height = inv;
+          vizWrapper.style.transform = `scale(${scale})`;
+          vizWrapper.style.width = inv;
+          vizWrapper.style.height = inv;
         }
       }
 
@@ -268,39 +273,117 @@
 
       let currentUrl = "";
       let currentCode = "";
-      let loadTimer = null;
+      let renderTimer = null;
 
       function hideSpinner() {
-        clearTimeout(loadTimer);
-        loadTimer = null;
+        clearTimeout(renderTimer);
+        renderTimer = null;
         loadingOverlay.classList.add("hidden");
-        loadingOverlay.classList.remove("blocked");
+        loadingOverlay.classList.remove("error");
         loadingOverlay.innerHTML =
           '<div class="spinner"></div><span>Loading visualization…</span>';
       }
 
-      function showBlockedFallback() {
+      function showRenderError(message) {
         loadingOverlay.classList.remove("hidden");
-        loadingOverlay.classList.add("blocked");
+        loadingOverlay.classList.add("error");
         loadingOverlay.innerHTML =
-          '<span style="font-size:0.85rem;opacity:0.8;text-align:center;max-width:34rem">Inline preview was blocked by the host app. Some MCP clients, including Claude Desktop, restrict iframe origins with Content Security Policy and will not embed <code>localhost</code> pages.</span>' +
+          `<span style="font-size:0.85rem;opacity:0.8;text-align:center;max-width:34rem">${message}</span>` +
           (currentUrl
             ? `<a href="${currentUrl}" target="_blank" rel="noopener" style="font-size:0.85rem;color:inherit;text-decoration:underline;text-underline-offset:2px">Open visualization in browser ↗</a>`
             : "");
       }
 
-      // Hide spinner when iframe finishes loading
-      iframe.addEventListener("load", () => {
-        if (iframe.src && iframe.src !== "about:blank") {
-          hideSpinner();
-        }
-      });
+      /** Load a <script> by URL. Returns a promise. */
+      function loadScript(src) {
+        return new Promise((resolve, reject) => {
+          // Skip if already loaded
+          if (document.querySelector(`script[src="${CSS.escape(src)}"]`)) {
+            return resolve();
+          }
+          const el = document.createElement("script");
+          el.src = src;
+          el.onload = resolve;
+          el.onerror = () => {
+            console.warn("[show] Failed to load script:", src);
+            resolve(); // don't reject — try to continue
+          };
+          document.head.appendChild(el);
+        });
+      }
 
-      // Fallback: if load never fires within 10s, assume the host blocked iframe
-      // embedding (commonly due to CSP restrictions on localhost origins).
-      function startLoadTimer() {
-        clearTimeout(loadTimer);
-        loadTimer = setTimeout(showBlockedFallback, 10_000);
+      /**
+       * Render static HTML (from Panel save(resources='cdn', embed=True))
+       * directly into the page — no nested iframe.
+       *
+       * 1. Parse the HTML document.
+       * 2. Copy <style> and <link rel="stylesheet"> into <head>.
+       * 3. Insert body DOM (non-script elements) into the viz container.
+       * 4. Load external <script src="..."> sequentially (CDN Bokeh bundles).
+       * 5. Execute inline <script> blocks (Bokeh.embed.embed_items).
+       */
+      async function renderEmbedHtml(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        // 1. Styles — insert into <head>
+        doc.querySelectorAll("style").forEach((style) => {
+          const clone = document.createElement("style");
+          clone.textContent = style.textContent;
+          document.head.appendChild(clone);
+        });
+        doc.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+          const clone = document.createElement("link");
+          clone.rel = "stylesheet";
+          clone.href = link.getAttribute("href");
+          document.head.appendChild(clone);
+        });
+
+        // 2. Body content — keep everything EXCEPT executable JS scripts.
+        //    Bokeh embeds data in <script type="application/json" id="...">
+        //    elements that the inline JS reads via getElementById().textContent.
+        //    These MUST remain in the DOM.
+        vizContent.innerHTML = "";
+        for (const node of Array.from(doc.body.childNodes)) {
+          if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "SCRIPT") {
+            const type = (node.getAttribute("type") || "").toLowerCase();
+            // Skip executable JS — we handle those separately below.
+            // Keep data scripts (application/json, importmap, etc.) in the DOM.
+            if (!type || type === "text/javascript" || type === "module") continue;
+          }
+          vizContent.appendChild(document.importNode(node, true));
+        }
+
+        // 3. Collect executable JS scripts — separate external from inline
+        const externalScripts = [];
+        const inlineScripts = [];
+        doc.querySelectorAll("script").forEach((s) => {
+          const type = (s.getAttribute("type") || "").toLowerCase();
+          // Only collect executable JS scripts
+          if (type && type !== "text/javascript" && type !== "module") return;
+          const src = s.getAttribute("src");
+          if (src) {
+            externalScripts.push(src);
+          } else if (s.textContent.trim()) {
+            inlineScripts.push(s.textContent);
+          }
+        });
+
+        // 4. Load external scripts sequentially (order matters for Bokeh)
+        for (const src of externalScripts) {
+          await loadScript(src);
+        }
+
+        // 5. Execute inline scripts (Bokeh.embed.embed_items etc.)
+        for (const code of inlineScripts) {
+          try {
+            const el = document.createElement("script");
+            el.textContent = code;
+            document.body.appendChild(el);
+          } catch (err) {
+            console.warn("[show] Inline script error:", err);
+          }
+        }
       }
 
       async function copyToClipboard(text) {
@@ -346,7 +429,7 @@
 
       const app = new App({ name: "panel-live-server-show", version: "0.1.0" });
 
-      app.ontoolresult = ({ content }) => {
+      app.ontoolresult = async ({ content }) => {
         const textContent = content?.find((entry) => entry.type === "text");
         const rawText = textContent?.text ?? "No tool text payload received.";
 
@@ -376,7 +459,7 @@
             document.title = `Panel Live Server · ${parsedPayload.name}`;
           }
 
-          // Enable action buttons now that we have a result
+          // Enable action buttons
           copyCodeButton.disabled = !currentCode;
           shareUrlButton.disabled = !currentUrl;
 
@@ -389,8 +472,6 @@
           }
 
           const fullText = `${baseMessage}${extraError}${recovery}`;
-          // Show short label in toolbar; full detail on hover
-          // Wrap in span so tinted background hugs the text, not the full flex width
           messageEl.innerHTML = `<span>${baseMessage}</span>`;
           messageEl.title = fullText;
         } else {
@@ -402,26 +483,52 @@
           currentCode = "";
         }
 
-        // Load iframe or show error panel
-        if (currentUrl) {
-          errorPanel.classList.remove("visible");
-          iframe.style.display = "";
-          loadingOverlay.classList.remove("hidden", "blocked");
-          loadingOverlay.innerHTML =
-            '<div class="spinner"></div><span>Loading visualization…</span>';
-          iframe.src = currentUrl;
-          startLoadTimer();
-        } else {
-          hideSpinner();
-          iframe.src = "about:blank";
-          iframe.style.display = "none";
+        // --- Render the visualization ---
+        const embedHtml = (parsedPayload && typeof parsedPayload.embed_html === "string")
+          ? parsedPayload.embed_html : "";
 
-          // Determine error text from parsed payload or raw text
+        if (embedHtml) {
+          // Direct DOM rendering — no nested iframe.
+          // The static HTML from Panel save(resources='cdn') contains external
+          // <script src="https://cdn.bokeh.org/..."> tags (allowed by
+          // resourceDomains) and inline <script> with Bokeh.embed.embed_items().
+          errorPanel.classList.remove("visible");
+          vizWrapper.style.display = "";
+          loadingOverlay.classList.remove("hidden", "error");
+          loadingOverlay.innerHTML =
+            '<div class="spinner"></div><span>Rendering visualization…</span>';
+
+          // Safety timer — if rendering stalls, show fallback
+          renderTimer = setTimeout(() => showRenderError(
+            "Rendering took too long. Scripts from CDN may be blocked."
+          ), 30_000);
+
+          try {
+            await renderEmbedHtml(embedHtml);
+            hideSpinner();
+          } catch (err) {
+            console.error("[show] Render error:", err);
+            showRenderError(`Rendering failed: ${err.message}`);
+          }
+        } else if (currentUrl) {
+          // No embed HTML available (e.g. panel method).
+          // Show a message directing the user to the browser link.
+          errorPanel.classList.remove("visible");
+          vizContent.innerHTML = "";
+          hideSpinner();
+          showRenderError(
+            "This visualization requires a live server session and cannot be " +
+            "rendered inline. Use Share URL to copy the link and open it in a browser."
+          );
+        } else {
+          // No URL and no embed — show error panel
+          hideSpinner();
+          vizWrapper.style.display = "none";
+
           const errorText = (parsedPayload && parsedPayload.status === "error")
             ? (parsedPayload.error_message || parsedPayload.message || rawText)
             : rawText;
 
-          // Classify the error for the header
           const lower = errorText.toLowerCase();
           const headerText = lower.includes("security") || lower.includes("blocked")
             ? "✗ Security Error"
