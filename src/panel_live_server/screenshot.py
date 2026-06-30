@@ -62,6 +62,7 @@ def is_browser_installed() -> bool:
     except Exception:
         return False
 
+
 # Best-effort wait for Panel/Bokeh content to mount before capturing.
 _CONTENT_SELECTOR = "canvas, .bk-Row, .bk-Column, .bk, .markdown, table, img, svg"
 
