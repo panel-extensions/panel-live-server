@@ -12,6 +12,8 @@ install hint so callers can degrade gracefully instead of crashing.
 
 import asyncio
 import logging
+import os
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,45 @@ class PlaywrightUnavailableError(RuntimeError):
     """Raised when Playwright or its browser is not installed/launchable."""
 
 
-_INSTALL_HINT = "Playwright Chromium is not installed. Run:\n" "    playwright install chromium"
+_INSTALL_HINT = "Playwright's Chromium browser is not installed. Run:\n    pls install-browser"
+
+
+def install_browser() -> int:
+    """Download the headless Chromium browser the screenshot tool needs.
+
+    Playwright ships its browser binary separately from the Python package, so
+    ``pip``/``uv`` installs do not fetch it automatically. This shells out to
+    ``<this-interpreter> -m playwright install chromium`` so the browser always
+    lands in the same environment that is running ``pls`` — avoiding the common
+    trap where the binary is installed under a different interpreter.
+
+    Returns
+    -------
+    int
+        The installer subprocess exit code (``0`` on success).
+    """
+    import subprocess
+
+    return subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"]).returncode
+
+
+def is_browser_installed() -> bool:
+    """Return ``True`` if the Chromium binary Playwright needs is present.
+
+    This is a cheap check — it does not launch a browser. It uses Playwright's
+    sync API, so call it from a worker thread (e.g. ``asyncio.to_thread``), not
+    directly inside a running event loop.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return False
+    try:
+        with sync_playwright() as p:
+            path = p.chromium.executable_path
+        return bool(path) and os.path.exists(path)
+    except Exception:
+        return False
 
 # Best-effort wait for Panel/Bokeh content to mount before capturing.
 _CONTENT_SELECTOR = "canvas, .bk-Row, .bk-Column, .bk, .markdown, table, img, svg"
