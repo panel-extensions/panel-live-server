@@ -27,6 +27,12 @@ terminal. By the end, `pls --version` will print the installed version.
     pixi add --pypi "panel-live-server[pydata]"
     ```
 
+    Install the browser the `screenshot` tool needs:
+
+    ```bash
+    pixi run pls install-browser
+    ```
+
     Find the `pls` path:
 
     **macOS / Linux:**
@@ -49,6 +55,12 @@ terminal. By the end, `pls --version` will print the installed version.
 
     ```bash
     uv tool install "panel-live-server[pydata]"
+    ```
+
+    Install the browser the `screenshot` tool needs:
+
+    ```bash
+    pls install-browser
     ```
 
     Find the `pls` path:
@@ -96,6 +108,12 @@ terminal. By the end, `pls --version` will print the installed version.
 
     ```bash
     pip install "panel-live-server[pydata]"
+    ```
+
+    Install the browser the `screenshot` tool needs:
+
+    ```bash
+    pls install-browser
     ```
 
     Find the `pls` path:

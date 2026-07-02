@@ -187,11 +187,16 @@ The server runs in an isolated uv tool environment. Install missing packages as 
 
 ### `screenshot` fails with a Playwright error
 
-The `screenshot` tool needs the Chromium browser that Playwright manages. Install it once with:
+The `screenshot` tool needs the Chromium browser that Playwright manages, which is
+not installed automatically. Install it once with:
 
 ```bash
-playwright install chromium
+pls install-browser
 ```
+
+This downloads Chromium into the same environment that runs `pls`. See
+[Installation → Enable the screenshot tool](installation.md#enable-the-screenshot-tool)
+for the per-installer command.
 
 ---
 

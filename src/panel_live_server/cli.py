@@ -271,6 +271,29 @@ def list_packages(
         typer.echo(f"{name:<{name_width}}  {version}")
 
 
+@app.command(name="install-browser")
+def install_browser() -> None:
+    """Download the Chromium browser the `screenshot` MCP tool needs.
+
+    Playwright ships its browser binary separately from the Python package, so a
+    `pip` or `uv` install does not fetch it automatically. Run this once after
+    installing (pixi users get it via `pixi run postinstall`). It lands in the
+    same environment that runs `pls`.
+    """
+    from panel_live_server.screenshot import install_browser as _install_browser
+
+    typer.echo("Installing Chromium for the screenshot tool (one-time)...")
+    code = _install_browser()
+    if code == 0:
+        typer.echo("Done — the screenshot tool is ready.")
+    else:
+        typer.echo(
+            "Browser install failed. Try manually: python -m playwright install chromium",
+            err=True,
+        )
+        raise typer.Exit(code)
+
+
 def main() -> None:
     """Entry point for the pls command."""
     app()

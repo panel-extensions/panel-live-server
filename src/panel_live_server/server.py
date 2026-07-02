@@ -262,6 +262,19 @@ async def app_lifespan(app):
     else:
         logger.warning("Panel Live Server failed to start - show tool will not work")
 
+    # Warn early if the screenshot browser is missing, so users find out now
+    # rather than mid-screenshot. The check uses Playwright's sync API, so run
+    # it in a worker thread to stay off the event loop.
+    try:
+        from panel_live_server.screenshot import is_browser_installed
+
+        if not await asyncio.to_thread(is_browser_installed):
+            msg = "The `screenshot` tool needs Chromium, which is not installed. Run `pls install-browser` to enable it."
+            print(f"\n  {msg}\n", file=sys.stderr, flush=True)  # noqa: T201
+            logger.warning(msg)
+    except Exception:
+        logger.debug("Could not check screenshot browser availability", exc_info=True)
+
     try:
         yield
     finally:
