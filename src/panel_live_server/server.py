@@ -562,7 +562,7 @@ async def show(
     name: str = "",
     description: str = "",
     method: Literal["inline", "server"] = "inline",
-    zoom: int = 100,
+    zoom: int = 75,
     quick: bool = False,
     ctx: Context | None = None,
 ) -> str:
@@ -607,11 +607,14 @@ async def show(
           dataframes, and objects that do NOT import panel directly.
         - "server": displays objects marked `.servable()`. Use when the code imports
           and uses Panel to build dashboards, apps, or complex layouts.
-    zoom : {100, 75, 50, 25}, default 100
+    zoom : {100, 75, 50, 25}, default 75
         Initial zoom level for the visualization preview.
-        Choose based on how much content the visualization contains:
-        - 100: simple plots, single charts, dataframes, small widgets — fits naturally.
-        - 75: multi-panel layouts, apps with a sidebar, moderate dashboards.
+        Default to 75 for most visualizations — it fits the majority of charts
+        and dashboards comfortably in the preview pane. Only deviate when needed:
+        - 100: tiny widgets, single-value displays, or very small plots where
+          75 would make text unreadable.
+        - 75: use for almost everything — simple charts, multi-panel layouts,
+          dataframes, moderate dashboards. This is the recommended default.
         - 50: full-page template apps (FastListTemplate, MaterialTemplate, etc.)
           with header + sidebar + main area.
         - 25: very large or wide apps designed for big screens; use when 50 still
