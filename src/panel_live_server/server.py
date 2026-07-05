@@ -318,6 +318,12 @@ mcp = FastMCP(
         "   Results are cached — `show` reuses them with zero overhead.\n"
         "3. SHOW: Call `show(code, name, description, method, zoom)` to render. "
         "   `show` will raise an error if `validate()` was not called first.\n\n"
+        "EDA — EXPLORE A DATASET: When the user asks to explore, profile, understand, "
+        "or 'do EDA on' a dataset, call `auto_eda(source, focus)` with a file path or "
+        "http(s) URL to a CSV/Parquet/JSON. It profiles the data and renders a full "
+        "interactive report (overview, distributions, correlations, missingness, outliers, "
+        "alerts, optional target analysis) and returns a `findings` summary you can narrate. "
+        "No need to write chart code or call validate/show for this.\n\n"
         "LIBRARY SELECTION (prefer in this order when suitable):\n"
         "- hvPlot: quick interactive plots from DataFrames (.plot API)\n"
         "- HoloViews: advanced composable, interactive visualizations\n"
@@ -569,6 +575,165 @@ async def validate(
     return {"valid": True}
 
 
+async def _create_and_respond(
+    code: str,
+    name: str,
+    description: str,
+    method: str,
+    zoom: int,
+    ctx: Context | None = None,
+    *,
+    tool: str = "show",
+    extra_payload: dict | None = None,
+) -> str:
+    """Create the snippet on the Panel server and build the MCP App JSON response.
+
+    Shared render/persist tail for ``show`` and ``auto_eda``: it ensures the Panel
+    server is healthy, sends the (already-validated) ``code``, and returns the JSON
+    payload the MCP App renders. ``tool`` labels the payload and ``extra_payload``
+    is merged in last (used by ``auto_eda`` to attach its findings summary).
+
+    Parameters
+    ----------
+    code : str
+        Already-validated Python code to render.
+    name : str
+        Short name stored with the snippet and echoed in the payload.
+    description : str
+        One-line description stored with the snippet.
+    method : str
+        Execution method — ``"inline"`` or ``"server"``.
+    zoom : int
+        Initial zoom level; clamped to the nearest valid level (25/50/75/100).
+    ctx : Context or None, optional
+        MCP request context, used to detect the client and its embed constraints.
+    tool : str, optional
+        Value for the payload ``"tool"`` field. Defaults to ``"show"``.
+    extra_payload : dict or None, optional
+        Extra fields merged into the payload after the defaults are set.
+
+    Returns
+    -------
+    str
+        JSON payload for MCP App rendering, including the visualization URL.
+    """
+    global _manager, _client
+
+    client_name = _get_mcp_client_name(ctx)
+    # Cowork runs as a local agent: the tool result counts against its model
+    # token budget, so its embed must stay under a tight cap.
+    is_cowork = client_name.startswith("local-agent-mode-")
+    # Clients whose iframes can't reach the live Panel server and must render
+    # embedded HTML instead: Claude Desktop ("claude-ai", frame-src CSP) and
+    # Cowork ("local-agent-mode-<connector>", sandboxed iframe blocks the websocket).
+    embed_only = client_name == "claude-ai" or is_cowork
+
+    # Clamp zoom to nearest valid level
+    _valid_zooms = [25, 50, 75, 100]
+    zoom = min(_valid_zooms, key=lambda z: abs(z - zoom))
+
+    if not _client:
+        # The Panel server was not available at MCP startup (e.g. the port was
+        # transiently occupied by an orphan from a previous session). Rather than
+        # staying permanently broken for the life of this process, retry the
+        # startup lazily here so the tool can self-heal on the next call.
+        logger.warning("Panel Live Server client is not initialized — attempting lazy startup")
+        _manager, _client = _start_panel_server()
+        if _manager:
+            atexit.register(_cleanup)
+
+    if not _client:
+        config = get_config()
+        raise ToolError(f"Panel Live Server is not running. Restart the MCP server. Ensure port {config.port} is not already in use.")
+
+    # Check health with restart logic
+    if not _client.is_healthy():
+        if ctx:
+            await ctx.info("Panel Live Server is not healthy, attempting restart...")
+
+        if _manager and _manager.restart():
+            _client.close()
+            _client = DisplayClient(base_url=_manager.get_base_url())
+        else:
+            config = get_config()
+            raise ToolError(f"Panel Live Server is not healthy and failed to restart. Kill any process on port {config.port} and restart the MCP server.")
+
+    # Send request to Panel server
+    try:
+        response = _client.create_snippet(
+            code=code,
+            name=name,
+            description=description,
+            method=method,
+            validated=True,
+        )
+        url = _externalize_url(response.get("url", ""))
+
+        payload: dict[str, object] = {
+            "tool": tool,
+            "name": name,
+            "description": description,
+            "method": method,
+            "zoom": zoom,
+            "url": url,
+            "code": code,
+        }
+
+        if error_message := response.get("error_message", None):
+            # Runtime error detected at storage time — raise so the LLM gets a
+            # clear text error instead of a blank App pane.
+            raise ToolError(f"Visualization created but failed at runtime:\n{error_message}\nFix the code and try again.")
+
+        snippet_id = response.get("id", "")
+
+        # Embed the rendered output as srcdoc so it displays inline without a live
+        # websocket back to the Panel server — needed only by clients whose iframe
+        # can't reach the server: Claude Desktop (frame-src CSP) and Cowork
+        # (sandboxed iframe). Clients that can reach the server (VS Code, Cursor,
+        # Claude Code) skip the embed and use the live URL already in the payload.
+        if embed_only and snippet_id:
+            embed_html = await asyncio.to_thread(_client.get_embed_html, snippet_id)
+            cap = _COWORK_EMBED_SIZE_CAP if is_cowork else _EMBED_SIZE_CAP
+            payload.update(_embed_fields(embed_html, embed_only, cap))
+
+        payload["status"] = "success"
+        payload["message"] = "Visualization created successfully."
+        payload["hint"] = (
+            "Follow-up handling for this visualization:\n"
+            f"- If the user only ASKS for information about it (where something peaks, "
+            "which element is largest, colors, positions, etc.) without wanting any "
+            f'change, call `screenshot(snippet_id="{snippet_id}")` to SEE the rendered '
+            "image and answer from it. Do NOT recompute from the code or re-run the data "
+            "— the rendered plot can differ from the raw data (row order, axis inversion, "
+            "sorting, binning).\n"
+            "- If the user wants to MODIFY the visualization (change colors, add a "
+            "series, adjust layout, etc.), write the updated code and call `show` again."
+        )
+        if extra_payload:
+            payload.update(extra_payload)
+        return json.dumps(payload)
+
+    except SecurityError:
+        raise
+    except ValidationError:
+        raise
+    except (SyntaxError, ExtensionError) as e:
+        # Defensive fallback: _run_validation() should have caught these already.
+        raise ValidationError(str(e)) from e
+
+    except ValueError as e:
+        raise ValidationError(
+            f"[packages] {e}\nDo NOT install packages or change the environment. "
+            "Call list_packages to see what is available, then rewrite using an installed library."
+        ) from e
+
+    except Exception as e:
+        logger.exception(f"Error creating visualization: {e}")
+        if ctx:
+            await ctx.error(f"Failed to create visualization: {e}")
+        raise ToolError(f"Failed to create visualization: {e!s}. Check that the Panel server is running and the code is valid Python.") from e
+
+
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
 async def show(
     code: str,
@@ -642,21 +807,6 @@ async def show(
     str
         JSON payload for MCP App rendering, including the visualization URL.
     """
-    global _manager, _client
-
-    client_name = _get_mcp_client_name(ctx)
-    # Cowork runs as a local agent: the tool result counts against its model
-    # token budget, so its embed must stay under a tight cap.
-    is_cowork = client_name.startswith("local-agent-mode-")
-    # Clients whose iframes can't reach the live Panel server and must render
-    # embedded HTML instead: Claude Desktop ("claude-ai", frame-src CSP) and
-    # Cowork ("local-agent-mode-<connector>", sandboxed iframe blocks the websocket).
-    embed_only = client_name == "claude-ai" or is_cowork
-
-    # Clamp zoom to nearest valid level
-    _valid_zooms = [25, 50, 75, 100]
-    zoom = min(_valid_zooms, key=lambda z: abs(z - zoom))
-
     if quick:
         # Quick mode: run full validation (static + runtime) inline.
         validation = _run_validation(code, method)
@@ -678,104 +828,102 @@ async def show(
         if not validation["valid"]:
             _raise_validation_error(validation)
 
-    if not _client:
-        # The Panel server was not available at MCP startup (e.g. the port was
-        # transiently occupied by an orphan from a previous session). Rather than
-        # staying permanently broken for the life of this process, retry the
-        # startup lazily here so the tool can self-heal on the next call.
-        logger.warning("Panel Live Server client is not initialized — attempting lazy startup")
-        _manager, _client = _start_panel_server()
-        if _manager:
-            atexit.register(_cleanup)
+    return await _create_and_respond(code, name, description, method, zoom, ctx)
 
-    if not _client:
-        config = get_config()
-        raise ToolError(f"Panel Live Server is not running. Restart the MCP server. Ensure port {config.port} is not already in use.")
 
-    # Check health with restart logic
-    if not _client.is_healthy():
-        if ctx:
-            await ctx.info("Panel Live Server is not healthy, attempting restart...")
+@mcp.tool(name="auto_eda", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
+async def auto_eda(
+    source: str,
+    focus: str = "",
+    name: str = "",
+    description: str = "",
+    zoom: int = 50,
+    ctx: Context | None = None,
+) -> str:
+    """Run a full exploratory data analysis on a dataset and render it as a live report.
 
-        if _manager and _manager.restart():
-            _client.close()
-            _client = DisplayClient(base_url=_manager.get_base_url())
-        else:
-            config = get_config()
-            raise ToolError(f"Panel Live Server is not healthy and failed to restart. Kill any process on port {config.port} and restart the MCP server.")
+    Point this at a dataset and it profiles the data itself and renders a
+    comprehensive, interactive HoloViz report — no chart code required. Use it
+    whenever the user asks to *explore*, *profile*, *understand*, or *do EDA on*
+    a dataset.
 
-    # Send request to Panel server
+    The report covers (each shown only when applicable): an Overview, a per-column
+    Summary table, curated Distributions, cross-column Missingness structure,
+    Correlations (Pearson/Spearman + strongest pairs + categorical association),
+    Outliers, a Time-series trend (if a datetime column exists), optional Target
+    analysis (when ``focus`` is given), consolidated Alerts, and Next steps.
+
+    The tool also returns a compact ``findings`` summary (shape, column-type mix,
+    top alerts, strongest relationships, missingness) in its payload — narrate the
+    dataset from that without needing a screenshot. To answer a question about how
+    a specific chart *looks*, call ``screenshot(snippet_id=...)``.
+
+    Parameters
+    ----------
+    source : str
+        A local file path or ``http(s)`` URL to a CSV, TSV, Parquet, or JSON file.
+    focus : str, optional
+        A target/focus column name. When given, adds a target-analysis section
+        that ranks features by their relationship to it and flags possible leakage.
+    name : str, optional
+        Short report name shown in the feed. Defaults to ``"EDA: <filename>"``.
+    description : str, optional
+        One-line description. Defaults to a generated summary line.
+    zoom : {100, 75, 50, 25}, default 50
+        Initial zoom level for the report preview (50 suits the multi-tab layout).
+
+    Returns
+    -------
+    str
+        JSON payload for MCP App rendering, including the report ``url`` and the
+        structured ``findings`` summary.
+    """
+    from panel_live_server import eda
+    from panel_live_server.utils import validate_code
+
+    if not source or not source.strip():
+        raise ValidationError("Provide a data source: a file path or http(s) URL to a CSV, Parquet, or JSON file.")
+    source = source.strip()
+
+    # Load once in-process to fail fast with a clear error and to compute the findings summary.
     try:
-        response = _client.create_snippet(
-            code=code,
-            name=name,
-            description=description,
-            method=method,
-            validated=True,
-        )
-        url = _externalize_url(response.get("url", ""))
-
-        payload: dict[str, str | int | bool] = {
-            "tool": "show",
-            "name": name,
-            "description": description,
-            "method": method,
-            "zoom": zoom,
-            "url": url,
-            "code": code,
-        }
-
-        if error_message := response.get("error_message", None):
-            # Runtime error detected at storage time — raise so the LLM gets a
-            # clear text error instead of a blank App pane.
-            raise ToolError(f"Visualization created but failed at runtime:\n{error_message}\nFix the code and try again.")
-
-        snippet_id = response.get("id", "")
-
-        # Embed the rendered output as srcdoc so it displays inline without a live
-        # websocket back to the Panel server — needed only by clients whose iframe
-        # can't reach the server: Claude Desktop (frame-src CSP) and Cowork
-        # (sandboxed iframe). Clients that can reach the server (VS Code, Cursor,
-        # Claude Code) skip the embed and use the live URL already in the payload.
-        if embed_only and snippet_id:
-            embed_html = await asyncio.to_thread(_client.get_embed_html, snippet_id)
-            cap = _COWORK_EMBED_SIZE_CAP if is_cowork else _EMBED_SIZE_CAP
-            payload.update(_embed_fields(embed_html, embed_only, cap))
-
-        payload["status"] = "success"
-        payload["message"] = "Visualization created successfully."
-        payload["hint"] = (
-            "Follow-up handling for this visualization:\n"
-            f"- If the user only ASKS for information about it (where something peaks, "
-            "which element is largest, colors, positions, etc.) without wanting any "
-            f'change, call `screenshot(snippet_id="{snippet_id}")` to SEE the rendered '
-            "image and answer from it. Do NOT recompute from the code or re-run the data "
-            "— the rendered plot can differ from the raw data (row order, axis inversion, "
-            "sorting, binning).\n"
-            "- If the user wants to MODIFY the visualization (change colors, add a "
-            "series, adjust layout, etc.), write the updated code and call `show` again."
-        )
-        return json.dumps(payload)
-
-    except SecurityError:
-        raise
-    except ValidationError:
-        raise
-    except (SyntaxError, ExtensionError) as e:
-        # Defensive fallback: _run_validation() should have caught these already.
-        raise ValidationError(str(e)) from e
-
-    except ValueError as e:
-        raise ValidationError(
-            f"[packages] {e}\nDo NOT install packages or change the environment. "
-            "Call list_packages to see what is available, then rewrite using an installed library."
-        ) from e
-
+        df = await asyncio.to_thread(eda.load_source, source)
     except Exception as e:
-        logger.exception(f"Error creating visualization: {e}")
-        if ctx:
-            await ctx.error(f"Failed to create visualization: {e}")
-        raise ToolError(f"Failed to create visualization: {e!s}. Check that the Panel server is running and the code is valid Python.") from e
+        raise ValidationError(f"[data] Could not load {source!r}: {e}") from e
+
+    findings = await asyncio.to_thread(eda.compute_summary, df, focus)
+
+    # Build the self-contained snippet that re-opens the source and renders the report.
+    # All analysis lives in the (trusted) eda module; only this tiny wrapper is security-scanned.
+    report_title = name or f"EDA: {Path(source).name}"
+    code = (
+        "import panel as pn\n"
+        'pn.extension("tabulator")\n'
+        "from panel_live_server import eda\n"
+        f"df = eda.load_source({source!r})\n"
+        f"eda.build_report(df, focus={focus!r}, title={report_title!r}).servable()\n"
+    )
+
+    # Full validation inline (static + runtime), mirroring show(quick=True).
+    validation = _run_validation(code, "server")
+    if not validation["valid"]:
+        _raise_validation_error(validation)
+    runtime_error = await asyncio.to_thread(validate_code, code)
+    if runtime_error:
+        raise ValidationError(f"[runtime] {runtime_error}")
+
+    if not description:
+        description = f"Automated EDA report for {source}" + (f" (target: {focus})" if focus else "")
+
+    extra_payload = {
+        "findings": findings,
+        "hint": (
+            "This is an automated EDA report. Use the `findings` field (shape, column types, "
+            "alerts, strongest relationships, missingness) to narrate what the dataset looks like. "
+            "To answer a question about how a specific chart LOOKS, call screenshot(snippet_id=...)."
+        ),
+    }
+    return await _create_and_respond(code, report_title, description, "server", zoom, ctx, tool="auto_eda", extra_payload=extra_payload)
 
 
 @mcp.tool(name="screenshot")

@@ -552,3 +552,68 @@ def test_embed_fields_cowork_cap_falls_back_to_link():
     # Desktop cap: embeds inline. Cowork cap: drops to the placeholder link.
     assert set(_embed_fields(big_html, embed_only=True)) == {"embed_html_gz"}
     assert set(_embed_fields(big_html, embed_only=True, cap=_COWORK_EMBED_SIZE_CAP)) == {"panel_server"}
+
+
+# ---------------------------------------------------------------------------
+# auto_eda tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_eda_tool_registered():
+    """auto_eda is exposed as an MCP tool."""
+    client = Client(mcp)
+    async with client:
+        tools = await client.list_tools()
+        assert "auto_eda" in {t.name for t in tools}
+
+
+@pytest.mark.asyncio
+async def test_auto_eda_invalid_source_raises():
+    """auto_eda surfaces a clear error for an unreadable source (no App pane)."""
+    client = Client(mcp)
+    async with client:
+        with pytest.raises(ToolError, match=r"\[data\]"):
+            await client.call_tool("auto_eda", {"source": "/no/such/file.csv"})
+
+
+@pytest.mark.asyncio
+async def test_auto_eda_returns_report_and_findings(tmp_path):
+    """auto_eda renders a report and returns a structured findings summary."""
+    import pandas as pd
+
+    csv = tmp_path / "sample.csv"
+    pd.DataFrame({"species": ["a", "b", "a", "b", "a", "b"], "mass": [10.0, 20, 15, 25, 12, 22], "flip": [1.0, 2, 3, 4, 5, 6]}).to_csv(csv, index=False)
+    server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("auto_eda", {"source": str(csv), "focus": "species"})
+        payload = json.loads(result.content[0].text)
+        assert payload["tool"] == "auto_eda"
+        assert "findings" in payload
+        assert payload["findings"]["rows"] == 6
+        assert payload["findings"]["focus"] == "species"
+
+
+@pytest.mark.asyncio
+async def test_auto_eda_view_page_renders_server_side(tmp_path):
+    """The report's /view page renders in the Panel subprocess (real render path)."""
+    import asyncio
+
+    import pandas as pd
+    import requests
+
+    csv = tmp_path / "render.csv"
+    pd.DataFrame({"a": [1.0, 2, 3, 4, 5, 6], "b": ["x", "y", "x", "y", "x", "y"], "c": [10.0, 20, 30, 40, 50, 60]}).to_csv(csv, index=False)
+    server_module._validation_cache.clear()
+    server_module._fully_validated.clear()
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("auto_eda", {"source": str(csv)})
+        payload = json.loads(result.content[0].text)
+        url = payload["url"]
+        resp = await asyncio.to_thread(requests.get, url, timeout=45)
+        assert resp.status_code == 200
+        # A server-side render error would not embed the Bokeh document.
+        assert "bokeh" in resp.text.lower()

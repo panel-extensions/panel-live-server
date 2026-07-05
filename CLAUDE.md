@@ -100,6 +100,7 @@ src/panel_live_server/
   - `zoom`: `25 | 50 | 75 | 100`
 - **`validate(code, method)`** — static + runtime validation before show; caches result
 - **`screenshot(code, name, description, method, width, height, full_page)`** — visual validation; renders in headless browser and returns a PNG to the LLM (not the user) so it can inspect layout/appearance before calling `show`
+- **`auto_eda(source, focus, name, description, zoom)`** — one-call exploratory data analysis. Profiles a CSV/Parquet/JSON file or URL and renders a full interactive HoloViz report (overview, per-column summary table, distributions, correlations, missingness, outliers, alerts, optional target analysis). Returns the report URL plus a structured `findings` summary. All analysis lives in `eda.py`; the tool only generates a tiny validated snippet that calls it.
 - **`list_packages()`** — list installed Python packages with versions
 
 ## Documentation Structure (Diataxis)

@@ -17,6 +17,7 @@ assistants to display and inspect Python outputs in real time.
 
 - **Two interfaces** — `pls serve` (standalone browser UI) and `pls mcp` (MCP server for AI assistants)
 - **Any visualization library** — hvplot · plotly · altair · matplotlib · seaborn · holoviews · bokeh · and more
+- **One-call EDA** — `auto_eda` profiles any CSV/Parquet/JSON (file or URL) and renders a full interactive report: overview, distributions, correlations, missingness, outliers, alerts, and optional target analysis
 - **Validate before render** — syntax, security, package, and extension checks before any rendering happens
 - **Visual validation** — `screenshot` MCP tool lets the AI inspect the rendered output visually before presenting it
 - **Persistent storage** — SQLite database with full-text search; every snippet gets its own permanent URL

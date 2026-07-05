@@ -15,6 +15,23 @@ are in the [Panel dashboard](#panel-dashboard) and [DataFrame table](#dataframe-
 
 ---
 
+## Exploratory data analysis (EDA)
+
+To profile a whole dataset in one step, ask your assistant to run `auto_eda` on a file or URL:
+
+> "Do a full EDA on `sales.csv`."
+>
+> "Explore `https://example.com/data.parquet` — I care about the `churn` column."
+
+The `auto_eda` tool loads the data, profiles it, and renders an interactive report with tabs
+for overview, a per-column summary table, distributions, correlations, missingness, outliers,
+alerts, and — when you name a target via `focus` — a target-analysis section. It also returns a
+compact `findings` summary the assistant can narrate directly, without a screenshot.
+
+Supported formats: CSV, TSV, Parquet, and JSON (local paths or `http(s)` URLs).
+
+---
+
 ## Plotly
 
 Interactive charts with hover tooltips, zoom, and pan out of the box.
