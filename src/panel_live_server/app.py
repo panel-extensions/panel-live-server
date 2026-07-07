@@ -11,7 +11,9 @@ from panel_live_server.config import get_config
 from panel_live_server.endpoints import EmbedEndpoint
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import ScreenshotEndpoint
+from panel_live_server.endpoints import SessionEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
+from panel_live_server.endpoints import StreamRenderEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,7 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
     from panel_live_server.pages import admin_page
     from panel_live_server.pages import feed_page
     from panel_live_server.pages import view_page
+    from panel_live_server.pages.stream_page import stream_page
 
     # Initialize the database
     _ = get_db()
@@ -87,6 +90,7 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
         "/feed": feed_page,
         "/admin": admin_page,
         "/add": add_page,
+        "/stream": stream_page,
     }
 
     # Configure extra patterns for Tornado handlers (REST API endpoints)
@@ -94,6 +98,8 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
         (r"/api/snippet", SnippetEndpoint),
         (r"/api/embed", EmbedEndpoint),
         (r"/api/screenshot", ScreenshotEndpoint),
+        (r"/api/session", SessionEndpoint),
+        (r"/api/stream/([^/]+)", StreamRenderEndpoint),
         (r"/api/health", HealthEndpoint),
     ]
 

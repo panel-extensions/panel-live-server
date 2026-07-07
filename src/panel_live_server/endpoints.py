@@ -295,6 +295,73 @@ class ScreenshotEndpoint(RequestHandler):
         self.write(png)
 
 
+class SessionEndpoint(RequestHandler):
+    """Reserve a streaming session via POST /api/session.
+
+    Creates an empty slot in the session store and returns the session ID
+    together with the /stream URL the MCP App iframe should load immediately.
+    The session stays open until ``render()`` pushes code or it expires (30 min).
+    """
+
+    def post(self):
+        from panel_live_server.sessions import create_session
+
+        try:
+            body = json.loads(self.request.body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = {}
+
+        method = body.get("method", "inline")
+        session_id = create_session(method=method)
+
+        config = get_config()
+        if base_url := _get_external_base_url(self.request.host):
+            stream_url = f"{base_url}/stream?session_id={session_id}"
+        else:
+            host = _local_host(config.host)
+            stream_url = f"http://{host}:{config.port}/stream?session_id={session_id}"
+
+        self.set_status(200)
+        self.set_header("Content-Type", "application/json")
+        self.write({"session_id": session_id, "url": stream_url})
+
+
+class StreamRenderEndpoint(RequestHandler):
+    """Deliver code to a waiting streaming session via POST /api/stream/<session_id>.
+
+    Called by the MCP ``render`` tool after the LLM has finished generating
+    code. Pushes the code into the session store so the /stream Panel page
+    picks it up on its next 300 ms poll and executes it live.
+    """
+
+    def post(self, session_id: str):
+        from panel_live_server.sessions import push_code
+
+        try:
+            body = json.loads(self.request.body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "Invalid JSON body"})
+            return
+
+        code = body.get("code", "")
+        if not code:
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "'code' is required"})
+            return
+
+        if push_code(session_id, code):
+            self.set_status(200)
+            self.set_header("Content-Type", "application/json")
+            self.write({"status": "ok", "session_id": session_id})
+        else:
+            self.set_status(404)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": f"Session '{session_id}' not found or expired"})
+
+
 class HealthEndpoint(RequestHandler):
     """Tornado RequestHandler for /api/health endpoint."""
 

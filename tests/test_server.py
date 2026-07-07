@@ -25,8 +25,9 @@ async def test_list_tools():
         tools = await client.list_tools()
         tool_names = {t.name for t in tools}
         assert "show" in tool_names
-        assert "validate" in tool_names
+        assert "render" in tool_names
         assert "list_packages" in tool_names
+        assert "validate" not in tool_names
         assert "show_pyodide" not in tool_names
 
 
@@ -122,30 +123,12 @@ def test_packages_cli_filter():
 
 
 @pytest.mark.asyncio
-async def test_show_returns_payload_quick():
-    """Test show(quick=True) returns a JSON payload with expected fields."""
+async def test_show_returns_payload_with_code():
+    """show(code=...) returns a JSON payload with expected fields (fast single-call mode)."""
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
     code = "import panel as pn\npn.pane.Markdown('Hello').servable()"
     client = Client(mcp)
     async with client:
-        result = await client.call_tool("show", {"code": code, "method": "server", "quick": True})
-        text = result.content[0].text
-        payload = json.loads(text)
-        assert payload["tool"] == "show"
-        assert "status" in payload
-        assert "url" in payload or "message" in payload
-
-
-@pytest.mark.asyncio
-async def test_show_returns_payload_after_validate():
-    """Test show(quick=False) returns a JSON payload after prior validate() call."""
-    server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
-    code = "import panel as pn\npn.pane.Markdown('Hello').servable()"
-    client = Client(mcp)
-    async with client:
-        await client.call_tool("validate", {"code": code, "method": "server"})
         result = await client.call_tool("show", {"code": code, "method": "server"})
         text = result.content[0].text
         payload = json.loads(text)
@@ -154,132 +137,34 @@ async def test_show_returns_payload_after_validate():
         assert "url" in payload or "message" in payload
 
 
+@pytest.mark.asyncio
+async def test_show_streaming_mode_returns_session_id():
+    """show() with no code returns a session_id and a /stream URL immediately."""
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("show", {"name": "Test viz", "method": "inline"})
+        payload = json.loads(result.content[0].text)
+        assert payload["tool"] == "show"
+        assert payload["status"] == "streaming"
+        assert "session_id" in payload
+        assert "url" in payload
+        assert "/stream" in payload["url"]
+
+
 # ---------------------------------------------------------------------------
-# validate tool
+# Validation cache — static checks still run and are cached inside show/render
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_validate_returns_valid_for_correct_code():
-    """validate returns {"valid": true} for clean code (including runtime execution)."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("validate", {"code": "x = 1 + 2"})
-        data = json.loads(result.content[0].text)
-        assert data == {"valid": True}
-
-
-@pytest.mark.asyncio
-async def test_validate_catches_runtime_error():
-    """validate catches runtime errors (e.g. ValueError, TypeError) via code execution."""
-    client = Client(mcp)
-    async with client:
-        # This code is syntactically valid and passes static checks,
-        # but raises ValueError at runtime
-        result = await client.call_tool("validate", {"code": "int('not_a_number')"})
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is False
-        assert data["layer"] == "runtime"
-        assert "ValueError" in data["message"]
-
-
-@pytest.mark.asyncio
-async def test_validate_catches_attribute_error():
-    """validate catches AttributeError at runtime."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("validate", {"code": "x = [1, 2, 3]\nx.nonexistent_method()"})
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is False
-        assert data["layer"] == "runtime"
-        assert "AttributeError" in data["message"]
-
-
-@pytest.mark.asyncio
-async def test_validate_returns_error_for_syntax():
-    """validate reports a syntax error."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("validate", {"code": "def bad syntax"})
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is False
-        assert data["layer"] == "syntax"
-        assert "message" in data
-
-
-@pytest.mark.asyncio
-async def test_validate_returns_error_for_security():
-    """validate reports a security violation for blocked imports."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("validate", {"code": "import pickle\npickle.dumps({})"})
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is False
-        assert data["layer"] == "security"
-
-
-@pytest.mark.asyncio
-async def test_validate_returns_error_for_missing_package():
-    """validate reports a missing package error."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("validate", {"code": "import _totally_fake_pkg_xyz_abc"})
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is False
-        assert data["layer"] == "packages"
-
-
-@pytest.mark.asyncio
-async def test_validate_returns_error_for_missing_extension_panel_method():
-    """validate reports missing pn.extension() for panel method.
-
-    Uses a comment to trigger find_extensions() substring matching without
-    importing a package that may not be installed in the test environment.
-    """
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool(
-            "validate",
-            {
-                "code": "x = 1  # plotly visualization",
-                "method": "server",
-            },
-        )
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is False
-        assert data["layer"] == "extensions"
-        assert "plotly" in data["message"]
-
-
-@pytest.mark.asyncio
-async def test_validate_skips_extension_check_for_jupyter_method():
-    """validate does not require pn.extension() for jupyter method (auto-injected at render)."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool(
-            "validate",
-            {
-                "code": "x = 1  # plotly visualization",
-                "method": "inline",
-            },
-        )
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is True
-
-
-@pytest.mark.asyncio
-async def test_validate_result_is_cached():
-    """A second validate call with the same code returns the cached result."""
+async def test_static_validation_result_is_cached():
+    """Static validation results are cached by (code, method) across show calls."""
     server_module._validation_cache.clear()
     client = Client(mcp)
     async with client:
         code = "y = 42"
-        await client.call_tool("validate", {"code": code})
+        await client.call_tool("show", {"code": code, "method": "inline"})
         assert (code, "inline") in server_module._validation_cache
-        # Second call hits cache (no exception, same result).
-        result = await client.call_tool("validate", {"code": code})
-        data = json.loads(result.content[0].text)
-        assert data["valid"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -310,53 +195,58 @@ def test_security_error_is_tool_error_subclass():
 
 
 @pytest.mark.asyncio
-async def test_show_quick_raises_validation_error_on_syntax_error():
-    """show(quick=True) raises ValidationError([syntax]) for syntax errors."""
+async def test_show_raises_validation_error_on_syntax_error():
+    """show(code=...) raises ValidationError([syntax]) for syntax errors."""
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         with pytest.raises(ToolError, match=r"\[syntax\]"):
-            await client.call_tool("show", {"code": "def bad syntax", "quick": True})
+            await client.call_tool("show", {"code": "def bad syntax"})
 
 
 @pytest.mark.asyncio
-async def test_show_quick_raises_security_error_on_blocked_import():
-    """show(quick=True) raises SecurityError for blocked imports."""
+async def test_show_raises_security_error_on_blocked_import():
+    """show(code=...) raises SecurityError for blocked imports."""
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         with pytest.raises(ToolError, match="pickle"):
-            await client.call_tool("show", {"code": "import pickle\npickle.dumps({})", "quick": True})
+            await client.call_tool("show", {"code": "import pickle\npickle.dumps({})"})
 
 
 @pytest.mark.asyncio
-async def test_show_quick_raises_validation_error_on_missing_package():
-    """show(quick=True) raises ValidationError([packages]) for missing packages."""
+async def test_show_raises_validation_error_on_missing_package():
+    """show(code=...) raises ValidationError([packages]) for missing packages."""
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         with pytest.raises(ToolError, match=r"\[packages\]"):
-            await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc", "quick": True})
+            await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc"})
+
+
+@pytest.mark.asyncio
+async def test_show_raises_validation_error_for_missing_extension_server_method():
+    """show(code=..., method='server') raises ValidationError([extensions]) for missing pn.extension()."""
+    server_module._validation_cache.clear()
+    client = Client(mcp)
+    async with client:
+        with pytest.raises(ToolError, match=r"\[extensions\]"):
+            await client.call_tool(
+                "show",
+                {"code": "x = 1  # plotly visualization", "method": "server"},
+            )
 
 
 @pytest.mark.asyncio
 async def test_show_recovers_when_client_uninitialized():
-    """show self-heals when _client is None: it lazily (re)starts the server.
-
-    A failed startup must not wedge the process forever — the next show should
-    retry _start_panel_server() (which adopts the running server) and succeed.
-    """
+    """show self-heals when _client is None: lazily (re)starts the server and succeeds."""
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         saved_client, saved_manager = server_module._client, server_module._manager
         server_module._client = None
         try:
-            result = await client.call_tool("show", {"code": "x = 1", "quick": True})
+            result = await client.call_tool("show", {"code": "x = 1"})
             payload = json.loads(result.content[0].text)
             assert payload["status"] == "success"
             assert server_module._client is not None  # recovered
@@ -370,7 +260,6 @@ async def test_show_raises_tool_error_when_startup_fails():
     from unittest.mock import patch
 
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
         saved_client, saved_manager = server_module._client, server_module._manager
@@ -378,18 +267,17 @@ async def test_show_raises_tool_error_when_startup_fails():
         try:
             with patch.object(server_module, "_start_panel_server", return_value=(None, None)):
                 with pytest.raises(ToolError, match="not running"):
-                    await client.call_tool("show", {"code": "x = 1", "quick": True})
+                    await client.call_tool("show", {"code": "x = 1"})
         finally:
             server_module._client, server_module._manager = saved_client, saved_manager
 
 
 @pytest.mark.asyncio
-async def test_show_caches_validation_and_reuses_on_show():
-    """show reuses a cached validate() result — validation functions run only once."""
+async def test_show_caches_validation_and_reuses_on_second_call():
+    """show reuses a cached static-validation result — ast_check runs only once."""
     from unittest.mock import patch
 
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
 
     call_count = {"n": 0}
     original_ast_check = server_module.ast_check
@@ -402,83 +290,80 @@ async def test_show_caches_validation_and_reuses_on_show():
     with patch.object(server_module, "ast_check", side_effect=counting_ast_check):
         client = Client(mcp)
         async with client:
-            # First call: validate populates the cache + _fully_validated.
-            await client.call_tool("validate", {"code": code})
-            # Second call: show hits the cache — ast_check not called again.
+            await client.call_tool("show", {"code": code, "method": "inline"})
+            # Second call with same code: hits the cache — ast_check not called again.
             await client.call_tool("show", {"code": code, "method": "inline"})
 
     assert call_count["n"] == 1, "ast_check should be called exactly once (cached on second call)"
 
 
-# ---------------------------------------------------------------------------
-# show quick=True: works without a prior validate() call
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_show_quick_works_without_prior_validate():
-    """show(quick=True) succeeds as a one-shot call — no prior validate() required."""
+async def test_show_single_call_succeeds():
+    """show(code=...) succeeds as a one-shot call — no separate step required."""
     server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
     client = Client(mcp)
     async with client:
-        result = await client.call_tool("show", {"code": "x = 1", "method": "inline", "quick": True})
-        payload = json.loads(result.content[0].text)
-        assert payload["status"] == "success"
-
-
-@pytest.mark.asyncio
-async def test_show_quick_catches_runtime_error():
-    """show(quick=True) raises ValidationError([runtime]) for runtime failures."""
-    server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
-    client = Client(mcp)
-    async with client:
-        with pytest.raises(ToolError, match=r"\[runtime\]"):
-            await client.call_tool("show", {"code": "int('not_a_number')", "quick": True})
-
-
-# ---------------------------------------------------------------------------
-# show quick=False (default): requires prior validate() call
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_show_default_raises_without_prior_validate():
-    """show(quick=False) raises ValidationError if validate() was not called first."""
-    server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
-    client = Client(mcp)
-    async with client:
-        with pytest.raises(ToolError, match="not been validated"):
-            await client.call_tool("show", {"code": "x = 1", "method": "inline"})
-
-
-@pytest.mark.asyncio
-async def test_show_default_succeeds_after_validate():
-    """show(quick=False) succeeds when validate() was called first."""
-    server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
-    client = Client(mcp)
-    async with client:
-        await client.call_tool("validate", {"code": "x = 1", "method": "inline"})
         result = await client.call_tool("show", {"code": "x = 1", "method": "inline"})
         payload = json.loads(result.content[0].text)
         assert payload["status"] == "success"
 
 
+# ---------------------------------------------------------------------------
+# render tool
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_show_quick_raises_validation_error_for_missing_extension_panel_method():
-    """show(quick=True) raises ValidationError([extensions]) for missing pn.extension()."""
-    server_module._validation_cache.clear()
-    server_module._fully_validated.clear()
+async def test_render_delivers_code_to_session():
+    """render(session_id, code) pushes code to a streaming session."""
+    from unittest.mock import patch
+
     client = Client(mcp)
     async with client:
-        with pytest.raises(ToolError, match=r"\[extensions\]"):
-            await client.call_tool(
-                "show",
-                {"code": "x = 1  # plotly visualization", "method": "server", "quick": True},
-            )
+        show_result = await client.call_tool("show", {"name": "Test", "method": "inline"})
+        payload = json.loads(show_result.content[0].text)
+        session_id = payload["session_id"]
+
+        with patch.object(server_module._client, "render_session", return_value=True) as mock_render:
+            result = await client.call_tool("render", {"session_id": session_id, "code": "x = 1"})
+            render_payload = json.loads(result.content[0].text)
+            assert render_payload["status"] == "success"
+            mock_render.assert_called_once_with(session_id, "x = 1")
+
+
+@pytest.mark.asyncio
+async def test_render_returns_pending_on_incomplete_code():
+    """render returns status='pending' for incomplete/invalid code so the LLM can keep generating."""
+    client = Client(mcp)
+    async with client:
+        show_result = await client.call_tool("show", {"name": "Test", "method": "inline"})
+        session_id = json.loads(show_result.content[0].text)["session_id"]
+
+        result = await client.call_tool("render", {"session_id": session_id, "code": "def bad syntax"})
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "pending"
+        assert "session_id" in payload
+
+
+@pytest.mark.asyncio
+async def test_render_raises_tool_error_for_expired_session():
+    """render raises ToolError when session_id is not found in the session store."""
+    from unittest.mock import patch
+
+    client = Client(mcp)
+    async with client:
+        with patch.object(server_module._client, "render_session", return_value=False):
+            with pytest.raises(ToolError, match="not found or has expired"):
+                await client.call_tool("render", {"session_id": "nonexistent-id", "code": "x = 1"})
+
+
+@pytest.mark.asyncio
+async def test_show_streaming_mode_rejects_server_method():
+    """show() without code rejects method='server' — streaming only supports inline."""
+    client = Client(mcp)
+    async with client:
+        with pytest.raises(ToolError, match="method='inline'"):
+            await client.call_tool("show", {"name": "Test", "method": "server"})
 
 
 # ---------------------------------------------------------------------------
