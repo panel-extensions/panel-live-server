@@ -299,20 +299,12 @@ mcp = FastMCP(
     instructions=(
         "Panel Live Server executes Python code snippets and renders the resulting "
         "visualizations as live, interactive web pages.\n\n"
-        "WORKFLOWS — choose one based on when you have the code:\n\n"
-        "STREAMING (recommended — lowest latency, live iframe):\n"
-        "1. Call `show(name, method)` with NO code — iframe appears immediately.\n"
-        "2. As you generate code, call `render(session_id, code)` with whatever you have so far.\n"
-        "   If the code is incomplete or not yet renderable, render() returns status='pending'\n"
-        "   and the iframe keeps its loading state — keep generating and call render() again.\n"
-        "3. When enough code is valid and renderable, the iframe updates live via WebSocket.\n"
-        "   Call render() as many times as needed. Only method='inline' is supported.\n\n"
-        "FAST SINGLE-CALL (when code is already written):\n"
-        "Call `show(code, name, method)` — static validation runs in ~50 ms and the\n"
-        "visualization URL is returned immediately. No separate validate() call needed.\n"
-        "Supports both method='inline' and method='server'.\n\n"
-        "DISCOVER (once per session): Call `list_packages()` to see what Python packages\n"
-        "are installed. The environment is fixed and cannot be modified.\n\n"
+        "WORKFLOW:\n"
+        "1. DISCOVER (once per session): Call `list_packages()` to see what Python\n"
+        "   packages are installed. The environment is fixed and cannot be modified.\n"
+        "2. SHOW: Call `show(code, name, method)` to render a visualization.\n"
+        "   Static validation (syntax, security, packages) runs in ~50 ms.\n"
+        "   The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
         "LIBRARY SELECTION (prefer in this order when suitable):\n"
         "- hvPlot: quick interactive plots from DataFrames (.plot API)\n"
         "- HoloViews: advanced composable, interactive visualizations\n"
@@ -544,49 +536,39 @@ async def list_packages(
 
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
 async def show(
+    code: str,
     name: str = "",
     description: str = "",
     method: Literal["inline", "server"] = "inline",
     zoom: int = 75,
-    code: str = "",
     ctx: Context | None = None,
 ) -> str:
-    """Reserve a visualization iframe and optionally render code into it immediately.
+    """Display Python code as a live, interactive visualization.
 
-    TWO MODES — choose based on when you have the code:
+    Runs static validation (syntax, security, packages, extensions) in ~50 ms,
+    stores the snippet, and returns the visualization URL. The iframe loads
+    immediately via Panel's WebSocket — the user sees a loading indicator then
+    the rendered visualization, with no prior ``validate()`` call needed.
 
-    **Streaming mode** (``code`` omitted — recommended):
-      Call ``show(name, method)`` as soon as you know you will draw something,
-      *before* writing any code. The iframe appears in the chat immediately with
-      a loading indicator. Then write the code and call ``render(session_id, code)``
-      to push it into the live iframe — the user sees the visualization stream in
-      via Panel's WebSocket without any page reload.
+    Always call this tool when the user asks to show, display, plot, or
+    visualize anything.
 
-      ```
-      # Step 1 — iframe appears immediately
-      result = show(name="Sine wave")
-      session_id = result["session_id"]   # save this
+    IMPORTANT — always provide a short ``name`` (e.g. "Temperature chart") so
+    the visualization is easy to find in the feed.
 
-      # Step 2 — write code, then push it (iframe updates live)
-      render(session_id=session_id, code="import numpy as np ...")
-      ```
-
-    **Fast single-call mode** (``code`` provided):
-      Call ``show(code, name, method)`` when you already have the final code.
-      Runs static validation (syntax, security, packages, extensions) in ~50 ms,
-      creates the snippet, and returns the URL — no prior ``validate()`` needed.
-      Use for simple revisions or when you don't need the streaming UX.
-
-    In both modes, ``SecurityError`` or ``ValidationError`` is raised on bad code.
-
-    IMPORTANT — always provide a short ``name`` so the visualization is easy to
-    find in the feed. Always present the returned ``url`` as a clickable link:
-    ``[Show Visualization](url)``.
+    IMPORTANT — after calling this tool, always present the returned ``url`` to
+    the user as a clickable Markdown link: ``[Show Visualization](url)``
 
     Parameters
     ----------
+    code : str
+        Python code to execute.
+        For ``"inline"`` method: the last expression is displayed. It must be
+        fully dedented (no leading whitespace on top-level statements).
+        For ``"server"`` method: call ``.servable()`` on objects to display.
     name : str, optional
         Short display name shown in the feed (e.g. "Sales chart 2024").
+        Always provide this — unnamed visualizations are hard to track.
     description : str, optional
         One-sentence description of what the visualization shows.
     method : {"inline", "server"}, default "inline"
@@ -594,24 +576,16 @@ async def show(
 
         - ``"inline"``: displays the last expression's result. Use for standard
           plots, DataFrames, and objects that do NOT import Panel directly.
-          **Only ``"inline"`` is supported in streaming mode.**
         - ``"server"``: displays objects marked ``.servable()``. Use when the
           code imports and uses Panel to build dashboards or complex layouts.
-          Requires ``code`` to be provided (fast single-call mode only).
     zoom : {100, 75, 50, 25}, default 75
         Initial zoom level for the preview pane. 75 fits most charts and
         dashboards. Use 50 for full-page templates, 25 for very wide apps.
-    code : str, optional
-        Python code to execute immediately. If omitted, the tool reserves a
-        streaming session — call ``render(session_id, code)`` to push code
-        once it is ready.
 
     Returns
     -------
     str
-        JSON payload for MCP App rendering. Includes ``url`` (always),
-        ``session_id`` (streaming mode only), and embed HTML for clients
-        that cannot reach the live server (Claude Desktop).
+        JSON payload for MCP App rendering, including the visualization URL.
     """
     global _manager, _client
 
@@ -624,45 +598,6 @@ async def show(
 
     await _ensure_client_ready(ctx)
 
-    # ------------------------------------------------------------------ #
-    # Streaming mode: no code yet — allocate a session, return iframe URL  #
-    # ------------------------------------------------------------------ #
-    if not code:
-        if embed_only:
-            raise ValidationError(
-                "Streaming mode is not available on this client (embed-only). "
-                "Provide the 'code' parameter to show() directly."
-            )
-        if method == "server":
-            raise ValidationError(
-                "Streaming mode only supports method='inline'. "
-                "For method='server' dashboards, provide 'code' directly to show()."
-            )
-
-        try:
-            session_resp = _client.create_session(method=method)
-        except RuntimeError as e:
-            raise ToolError(str(e)) from e
-
-        session_id = session_resp["session_id"]
-        url = _externalize_url(session_resp["url"])
-
-        payload: dict[str, str | int | bool] = {
-            "tool": "show",
-            "name": name,
-            "description": description,
-            "method": method,
-            "zoom": zoom,
-            "url": url,
-            "session_id": session_id,
-            "status": "streaming",
-            "message": f"Iframe reserved. Call render(session_id='{session_id}', code=...) to display the visualization.",
-        }
-        return json.dumps(payload)
-
-    # ------------------------------------------------------------------ #
-    # Fast single-call mode: validate (static only) + create snippet       #
-    # ------------------------------------------------------------------ #
     validation = _run_validation(code, method)
     if not validation["valid"]:
         _raise_validation_error(validation)
@@ -728,81 +663,6 @@ async def show(
         if ctx:
             await ctx.error(f"Failed to create visualization: {e}")
         raise ToolError(f"Failed to create visualization: {e!s}. Check that the Panel server is running and the code is valid Python.") from e
-
-
-@mcp.tool(name="render")
-async def render(
-    session_id: str,
-    code: str,
-    ctx: Context | None = None,
-) -> str:
-    """Push code into a streaming iframe opened by show().
-
-    Call this after ``show()`` has reserved a session (streaming mode).
-    The code is validated (syntax, security, packages) and then pushed to the
-    live /stream Panel page, which executes it and updates the iframe in real
-    time via WebSocket — no page reload, no extra round-trip.
-
-    Only ``method="inline"`` sessions are supported. For ``method="server"``
-    dashboards, pass code directly to ``show()`` instead.
-
-    Parameters
-    ----------
-    session_id : str
-        The ``session_id`` returned by ``show()`` in streaming mode.
-    code : str
-        Python code to execute. The last expression is displayed.
-        Must be fully dedented (no leading whitespace on top-level statements).
-
-    Returns
-    -------
-    str
-        ``{"status": "success"}`` on success. Raises ``ValidationError`` for
-        bad code and ``ToolError`` if the session has expired or is not found.
-    """
-    if not session_id:
-        raise ToolError("session_id is required. Pass the session_id returned by show().")
-    if not code:
-        raise ValidationError("code is required.")
-
-    # If the code has a syntax error it is incomplete — return "pending" so the
-    # LLM can keep generating and call render() again with more code.
-    if ast_check(code):
-        return json.dumps({
-            "status": "pending",
-            "session_id": session_id,
-            "message": "Code not yet complete (syntax). Keep generating and call render() again.",
-        })
-
-    # Security check runs only on syntactically valid code — always raise on violations.
-    try:
-        ruff_check(code)
-    except SecurityError:
-        raise
-
-    # Package / extension checks: incomplete code may import nothing yet — treat as pending.
-    validation = _run_validation(code, "inline")
-    if not validation["valid"]:
-        return json.dumps({
-            "status": "pending",
-            "session_id": session_id,
-            "message": f"Code not yet renderable ({validation.get('layer', 'unknown')}). Keep generating and call render() again.",
-        })
-
-    await _ensure_client_ready(ctx)
-
-    try:
-        ok = _client.render_session(session_id, code)
-    except RuntimeError as e:
-        raise ToolError(str(e)) from e
-
-    if not ok:
-        raise ToolError(
-            f"Session '{session_id}' was not found or has expired (sessions live for 30 minutes). "
-            "Call show() again to open a new streaming iframe."
-        )
-
-    return json.dumps({"status": "success", "session_id": session_id, "message": "Code delivered. The iframe is now rendering."})
 
 
 @mcp.tool(name="screenshot")

@@ -25,9 +25,9 @@ async def test_list_tools():
         tools = await client.list_tools()
         tool_names = {t.name for t in tools}
         assert "show" in tool_names
-        assert "render" in tool_names
         assert "list_packages" in tool_names
         assert "validate" not in tool_names
+        assert "render" not in tool_names
         assert "show_pyodide" not in tool_names
 
 
@@ -124,12 +124,12 @@ def test_packages_cli_filter():
 
 @pytest.mark.asyncio
 async def test_show_returns_payload_with_code():
-    """show(code=...) returns a JSON payload with expected fields (fast single-call mode)."""
+    """show(code, name, method) returns a JSON payload with expected fields."""
     server_module._validation_cache.clear()
     code = "import panel as pn\npn.pane.Markdown('Hello').servable()"
     client = Client(mcp)
     async with client:
-        result = await client.call_tool("show", {"code": code, "method": "server"})
+        result = await client.call_tool("show", {"code": code, "name": "Test", "method": "server"})
         text = result.content[0].text
         payload = json.loads(text)
         assert payload["tool"] == "show"
@@ -137,18 +137,6 @@ async def test_show_returns_payload_with_code():
         assert "url" in payload or "message" in payload
 
 
-@pytest.mark.asyncio
-async def test_show_streaming_mode_returns_session_id():
-    """show() with no code returns a session_id and a /stream URL immediately."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("show", {"name": "Test viz", "method": "inline"})
-        payload = json.loads(result.content[0].text)
-        assert payload["tool"] == "show"
-        assert payload["status"] == "streaming"
-        assert "session_id" in payload
-        assert "url" in payload
-        assert "/stream" in payload["url"]
 
 
 # ---------------------------------------------------------------------------
@@ -313,57 +301,6 @@ async def test_show_single_call_succeeds():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_render_delivers_code_to_session():
-    """render(session_id, code) pushes code to a streaming session."""
-    from unittest.mock import patch
-
-    client = Client(mcp)
-    async with client:
-        show_result = await client.call_tool("show", {"name": "Test", "method": "inline"})
-        payload = json.loads(show_result.content[0].text)
-        session_id = payload["session_id"]
-
-        with patch.object(server_module._client, "render_session", return_value=True) as mock_render:
-            result = await client.call_tool("render", {"session_id": session_id, "code": "x = 1"})
-            render_payload = json.loads(result.content[0].text)
-            assert render_payload["status"] == "success"
-            mock_render.assert_called_once_with(session_id, "x = 1")
-
-
-@pytest.mark.asyncio
-async def test_render_returns_pending_on_incomplete_code():
-    """render returns status='pending' for incomplete/invalid code so the LLM can keep generating."""
-    client = Client(mcp)
-    async with client:
-        show_result = await client.call_tool("show", {"name": "Test", "method": "inline"})
-        session_id = json.loads(show_result.content[0].text)["session_id"]
-
-        result = await client.call_tool("render", {"session_id": session_id, "code": "def bad syntax"})
-        payload = json.loads(result.content[0].text)
-        assert payload["status"] == "pending"
-        assert "session_id" in payload
-
-
-@pytest.mark.asyncio
-async def test_render_raises_tool_error_for_expired_session():
-    """render raises ToolError when session_id is not found in the session store."""
-    from unittest.mock import patch
-
-    client = Client(mcp)
-    async with client:
-        with patch.object(server_module._client, "render_session", return_value=False):
-            with pytest.raises(ToolError, match="not found or has expired"):
-                await client.call_tool("render", {"session_id": "nonexistent-id", "code": "x = 1"})
-
-
-@pytest.mark.asyncio
-async def test_show_streaming_mode_rejects_server_method():
-    """show() without code rejects method='server' — streaming only supports inline."""
-    client = Client(mcp)
-    async with client:
-        with pytest.raises(ToolError, match="method='inline'"):
-            await client.call_tool("show", {"name": "Test", "method": "server"})
 
 
 # ---------------------------------------------------------------------------
