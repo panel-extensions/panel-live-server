@@ -18,25 +18,29 @@
 
       .layout {
         display: grid;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: 1fr auto;   /* content first, controls in a footer below */
         min-height: 100vh;
         gap: 6px;
-        padding: 6px 8px 8px;
+        padding: 8px 8px 6px;
         box-sizing: border-box;
       }
 
+      /* The visualization is the hero. Controls sit in a quiet footer below it,
+         separated by a hairline divider and kept understated so they recede. */
       .toolbar {
         display: flex;
-        gap: 6px;
+        gap: 8px;
         align-items: center;
         flex-wrap: nowrap;
-        min-height: 28px;
+        min-height: 30px;
+        padding-top: 6px;
+        border-top: 1px solid rgba(120, 120, 120, 0.18);
       }
 
       .toolbar-sep {
         width: 1px;
         height: 16px;
-        background: rgba(120, 120, 120, 0.3);
+        background: rgba(120, 120, 120, 0.25);
         flex-shrink: 0;
       }
 
@@ -108,6 +112,49 @@
       button.zoom-active {
         background: rgba(120, 120, 120, 0.18);
         border-color: rgba(120, 120, 120, 0.7);
+      }
+
+      /* Icon action buttons — square, muted at rest, full strength on hover */
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        width: 30px;
+        height: 26px;
+        opacity: 0.7;
+      }
+
+      .icon-btn:not(:disabled):hover { opacity: 1; }
+
+      .icon-btn svg {
+        width: 15px;
+        height: 15px;
+        display: block;
+      }
+
+      /* Zoom rendered as a single compact segmented control */
+      .zoom-group {
+        display: inline-flex;
+        flex-shrink: 0;
+      }
+
+      .zoom-group button {
+        border-radius: 0;
+        border-right-width: 0;
+        padding: 3px 8px;
+        font-size: 0.74rem;
+      }
+
+      .zoom-group button:first-child {
+        border-top-left-radius: 6px;
+        border-bottom-left-radius: 6px;
+      }
+
+      .zoom-group button:last-child {
+        border-right-width: 1px;
+        border-top-right-radius: 6px;
+        border-bottom-right-radius: 6px;
       }
 
       .iframe-wrapper {
@@ -238,17 +285,6 @@
   </head>
   <body>
     <div class="layout">
-      <div class="toolbar">
-        <button id="share-url" type="button" disabled>Share URL</button>
-        <button id="copy-code" type="button" disabled>Copy Code</button>
-        <div class="toolbar-sep"></div>
-        <p id="message" class="message">Awaiting tool result…</p>
-        <div class="toolbar-sep"></div>
-        <button id="zoom-100" type="button" class="zoom-active">100%</button>
-        <button id="zoom-75"  type="button">75%</button>
-        <button id="zoom-50"  type="button">50%</button>
-        <button id="zoom-25"  type="button">25%</button>
-      </div>
       <div class="iframe-wrapper">
         <div id="loading-overlay" class="loading-overlay">
           <div class="spinner"></div>
@@ -263,6 +299,26 @@
         </div>
         <iframe id="view" src="about:blank" title="show preview"></iframe>
       </div>
+      <div class="toolbar">
+        <div class="zoom-group">
+          <button id="zoom-25"  type="button">25%</button>
+          <button id="zoom-50"  type="button">50%</button>
+          <button id="zoom-75"  type="button">75%</button>
+          <button id="zoom-100" type="button" class="zoom-active">100%</button>
+        </div>
+        <div class="toolbar-sep"></div>
+        <p id="message" class="message">Awaiting tool result…</p>
+        <div class="toolbar-sep"></div>
+        <button id="copy-code" class="icon-btn" type="button" title="Copy code" aria-label="Copy code" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <button id="share-url" class="icon-btn" type="button" title="Share URL — copy link" aria-label="Share URL — copy link" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        </button>
+        <button id="open-browser" class="icon-btn" type="button" title="Open in new window" aria-label="Open in new window" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </button>
+      </div>
     </div>
 
     <script type="module">
@@ -276,6 +332,7 @@
       const panelPlaceholder = document.getElementById("panel-placeholder");
       const copyCodeButton = document.getElementById("copy-code");
       const shareUrlButton  = document.getElementById("share-url");
+      const openBrowserButton = document.getElementById("open-browser");
       const zoomButtons = [
         { btn: document.getElementById("zoom-100"), scale: 1    },
         { btn: document.getElementById("zoom-75"),  scale: 0.75 },
@@ -364,13 +421,19 @@
         return ok;
       }
 
+      const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
+      // Preserve the button's contents (icon OR text) and restore after the flash.
       function flashCopied(btn) {
-        const original = btn.textContent;
-        btn.textContent = "Copied ✓";
+        if (btn.dataset.flashing) return;
+        btn.dataset.flashing = "1";
+        const original = btn.innerHTML;
+        btn.innerHTML = btn.classList.contains("icon-btn") ? CHECK_SVG : "Copied ✓";
         btn.classList.add("copied");
         setTimeout(() => {
-          btn.textContent = original;
+          btn.innerHTML = original;
           btn.classList.remove("copied");
+          delete btn.dataset.flashing;
         }, 1500);
       }
 
@@ -383,6 +446,11 @@
       copyCodeButton.addEventListener("click", async () => {
         const ok = await copyToClipboard(currentCode || "No code available.");
         if (ok) flashCopied(copyCodeButton);
+      });
+
+      openBrowserButton.addEventListener("click", () => {
+        if (!currentUrl) return;
+        app.openLink({ url: currentUrl });
       });
 
       const app = new App({ name: "panel-live-server-show", version: "0.1.0" });
@@ -436,6 +504,7 @@
           // Enable action buttons now that we have a result
           copyCodeButton.disabled = !currentCode;
           shareUrlButton.disabled = !currentUrl;
+          openBrowserButton.disabled = !currentUrl;
 
           // Apply zoom from payload
           const zoomVal = parsedPayload.zoom;
