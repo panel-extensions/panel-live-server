@@ -584,6 +584,22 @@
           iframe.removeAttribute("srcdoc");
           iframe.src = currentUrl;
           startLoadTimer();
+        } else if (parsedPayload && (parsedPayload.status === "retrying" || parsedPayload.status === "pending")) {
+          // A show() attempt did not render yet — the model is refining the code
+          // and will call show() again. Show a quiet, non-alarming working state
+          // (never a red error box). The real error detail stays on hover.
+          iframe.removeAttribute("srcdoc");
+          iframe.src = "about:blank";
+          iframe.style.display = "none";
+          errorPanel.classList.remove("visible");
+          clearTimeout(loadTimer);
+          loadTimer = null;
+          loadingOverlay.classList.remove("hidden");
+          loadingOverlay.classList.remove("blocked");
+          loadingOverlay.innerHTML =
+            '<div class="spinner"></div><span>' +
+            ((parsedPayload && parsedPayload.message) || "Refining visualization…") +
+            "</span>";
         } else {
           hideSpinner();
           iframe.src = "about:blank";

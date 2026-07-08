@@ -183,46 +183,73 @@ def test_security_error_is_tool_error_subclass():
 
 
 @pytest.mark.asyncio
-async def test_show_raises_validation_error_on_syntax_error():
-    """show(code=...) raises ValidationError([syntax]) for syntax errors."""
+async def test_show_returns_retry_payload_on_syntax_error():
+    """show(code=...) returns a quiet status='retrying' payload (no url) for syntax errors."""
     server_module._validation_cache.clear()
     client = Client(mcp)
     async with client:
-        with pytest.raises(ToolError, match=r"\[syntax\]"):
-            await client.call_tool("show", {"code": "def bad syntax"})
+        result = await client.call_tool("show", {"code": "def bad syntax"})
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "retrying"
+        assert payload["layer"] == "syntax"
+        assert "url" not in payload
 
 
 @pytest.mark.asyncio
-async def test_show_raises_security_error_on_blocked_import():
-    """show(code=...) raises SecurityError for blocked imports."""
+async def test_show_returns_retry_payload_on_blocked_import():
+    """show(code=...) returns status='retrying' with the security detail for blocked imports."""
     server_module._validation_cache.clear()
     client = Client(mcp)
     async with client:
-        with pytest.raises(ToolError, match="pickle"):
-            await client.call_tool("show", {"code": "import pickle\npickle.dumps({})"})
+        result = await client.call_tool("show", {"code": "import pickle\npickle.dumps({})"})
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "retrying"
+        assert payload["layer"] == "security"
+        assert "pickle" in payload["error_message"]
+        assert "url" not in payload
 
 
 @pytest.mark.asyncio
-async def test_show_raises_validation_error_on_missing_package():
-    """show(code=...) raises ValidationError([packages]) for missing packages."""
+async def test_show_returns_retry_payload_on_missing_package():
+    """show(code=...) returns status='retrying' with layer='packages' for missing packages."""
     server_module._validation_cache.clear()
     client = Client(mcp)
     async with client:
-        with pytest.raises(ToolError, match=r"\[packages\]"):
-            await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc"})
+        result = await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc"})
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "retrying"
+        assert payload["layer"] == "packages"
+        assert "url" not in payload
 
 
 @pytest.mark.asyncio
-async def test_show_raises_validation_error_for_missing_extension_server_method():
-    """show(code=..., method='server') raises ValidationError([extensions]) for missing pn.extension()."""
+async def test_show_returns_retry_payload_when_server_method_lacks_servable():
+    """show(method='server') without .servable() retries instead of rendering an empty box."""
+    server_module._validation_cache.clear()
+    code = "import panel as pn\npn.extension()\nlayout = pn.Row(pn.pane.Markdown('hi'))\nlayout"
+    client = Client(mcp)
+    async with client:
+        result = await client.call_tool("show", {"code": code, "method": "server"})
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "retrying"
+        assert payload["layer"] == "servable"
+        assert "url" not in payload
+
+
+@pytest.mark.asyncio
+async def test_show_returns_retry_payload_for_missing_extension_server_method():
+    """show(code=..., method='server') returns status='retrying' with layer='extensions'."""
     server_module._validation_cache.clear()
     client = Client(mcp)
     async with client:
-        with pytest.raises(ToolError, match=r"\[extensions\]"):
-            await client.call_tool(
-                "show",
-                {"code": "x = 1  # plotly visualization", "method": "server"},
-            )
+        result = await client.call_tool(
+            "show",
+            {"code": "x = 1  # plotly visualization", "method": "server"},
+        )
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "retrying"
+        assert payload["layer"] == "extensions"
+        assert "url" not in payload
 
 
 @pytest.mark.asyncio

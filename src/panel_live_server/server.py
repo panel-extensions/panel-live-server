@@ -105,6 +105,22 @@ def _run_validation(code: str, method: str) -> dict:
         except ExtensionError as e:
             result = {"valid": False, "layer": "extensions", "message": str(e)}
 
+    # method="server" renders only objects marked .servable(). Code that ends
+    # with a bare expression (e.g. `layout`) instead renders empty ("no servable
+    # objects found"). Catch it statically so it retries rather than showing a
+    # blank box.
+    if not result and method == "server" and ".servable()" not in code:
+        result = {
+            "valid": False,
+            "layer": "servable",
+            "message": (
+                "method='server' only displays objects marked with .servable(), "
+                "but the code calls it nowhere. Either mark the app servable "
+                "(e.g. `layout.servable()`), or call show() with method='inline' "
+                "and end the code with the object as the last expression."
+            ),
+        }
+
     if not result:
         result = {"valid": True}
 
@@ -112,20 +128,42 @@ def _run_validation(code: str, method: str) -> dict:
     return result
 
 
-def _raise_validation_error(validation: dict) -> None:
-    """Raise the appropriate ``SecurityError`` or ``ValidationError`` for a failed validation result."""
-    layer = validation.get("layer", "")
-    message = validation.get("message", "Validation failed.")
-    if layer == "security":
-        raise SecurityError(message)
-    elif layer == "syntax":
-        raise ValidationError(f"[syntax] {message}")
-    elif layer == "packages":
-        raise ValidationError(f"[packages] {message}")
-    elif layer == "extensions":
-        raise ValidationError(f"[extensions] {message}\nAdd the missing pn.extension(...) call to your code.")
-    else:
-        raise ValidationError(message)
+def _retry_payload(
+    *,
+    name: str,
+    description: str,
+    method: str,
+    zoom: int,
+    layer: str,
+    error_detail: str,
+) -> str:
+    """Build a friendly ``status="retrying"`` payload for a failed show() attempt.
+
+    The visualization did not render, but instead of raising a loud ToolError
+    (which the MCP App template paints as a big red error box), we return a
+    payload with **no url** and ``status="retrying"``. The template renders a
+    quiet "Refining visualization…" state — never an error box — while the
+    ``error_message``/``recovery`` fields hand the model the detail it needs to
+    fix the code and call ``show`` again.
+    """
+    return json.dumps(
+        {
+            "tool": "show",
+            "name": name,
+            "description": description,
+            "method": method,
+            "zoom": zoom,
+            "status": "retrying",
+            "layer": layer,
+            "message": "Refining visualization…",
+            "error_message": f"[{layer}] {error_detail}",
+            "recovery": (
+                "This code did not render. Do NOT show this error to the user. "
+                "Fix the problem described above and call show() again with corrected code. "
+                "Only report to the user once show() succeeds."
+            ),
+        }
+    )
 
 
 def _externalize_url(url: str) -> str:
@@ -305,6 +343,10 @@ mcp = FastMCP(
         "2. SHOW: Call `show(code, name, method)` to render a visualization.\n"
         "   Static validation (syntax, security, packages) runs in ~50 ms.\n"
         "   The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
+        "DO NOT write the visualization code to a file, script, notebook, or `examples/`\n"
+        "directory, and do not run it in a separate shell/REPL. Pass the code string\n"
+        "straight to `show(code=...)` — it executes the code for you. Creating files\n"
+        "clutters the user's repository and is not wanted.\n\n"
         "LIBRARY SELECTION (prefer in this order when suitable):\n"
         "- hvPlot: quick interactive plots from DataFrames (.plot API)\n"
         "- HoloViews: advanced composable, interactive visualizations\n"
@@ -553,6 +595,12 @@ async def show(
     Always call this tool when the user asks to show, display, plot, or
     visualize anything.
 
+    IMPORTANT — pass the Python code DIRECTLY as the ``code`` argument. Do NOT
+    write it to a file in the user's project first, do NOT create scripts,
+    notebooks, or ``examples/`` files, and do NOT run it in a separate shell.
+    This tool executes the code itself; creating files is unwanted side-effect
+    clutter in the user's repository.
+
     IMPORTANT — always provide a short ``name`` (e.g. "Temperature chart") so
     the visualization is easy to find in the feed.
 
@@ -598,9 +646,19 @@ async def show(
 
     await _ensure_client_ready(ctx)
 
+    # Static validation failure (syntax, security, packages, extensions):
+    # return a quiet retry payload instead of raising a loud error, so the App
+    # pane shows a friendly "Refining…" state while the model fixes the code.
     validation = _run_validation(code, method)
     if not validation["valid"]:
-        _raise_validation_error(validation)
+        return _retry_payload(
+            name=name,
+            description=description,
+            method=method,
+            zoom=zoom,
+            layer=validation.get("layer", "validation"),
+            error_detail=validation.get("message", "Validation failed."),
+        )
 
     try:
         response = _client.create_snippet(
@@ -608,9 +666,21 @@ async def show(
             name=name,
             description=description,
             method=method,
-            validated=True,
+            validated=False,
         )
         url = _externalize_url(response.get("url", ""))
+
+        # Runtime failure: the server ran the code and it raised. Same quiet
+        # retry treatment — hand the traceback to the model, show no error box.
+        if error_message := response.get("error_message", None):
+            return _retry_payload(
+                name=name,
+                description=description,
+                method=method,
+                zoom=zoom,
+                layer="runtime",
+                error_detail=error_message,
+            )
 
         payload = {
             "tool": "show",
@@ -621,9 +691,6 @@ async def show(
             "url": url,
             "code": code,
         }
-
-        if error_message := response.get("error_message", None):
-            raise ToolError(f"Visualization created but failed at runtime:\n{error_message}\nFix the code and try again.")
 
         snippet_id = response.get("id", "")
 
