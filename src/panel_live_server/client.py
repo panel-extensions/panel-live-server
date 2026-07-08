@@ -100,51 +100,6 @@ class DisplayClient:
             logger.exception(f"Error creating visualization: {e}")
             raise RuntimeError(f"Failed to create visualization: {e}") from e
 
-    def create_session(self, method: str = "inline") -> dict:
-        """Reserve a streaming session slot on the Panel server.
-
-        Returns ``{"session_id": str, "url": str}`` on success.
-
-        Raises
-        ------
-        RuntimeError
-            If the HTTP request fails.
-        """
-        try:
-            response = self.session.post(
-                f"{self.base_url}/api/session",
-                json={"method": method},
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            raise RuntimeError(f"Failed to create streaming session: {e}") from e
-
-    def render_session(self, session_id: str, code: str) -> bool:
-        """Push code to a waiting streaming session.
-
-        Returns ``True`` on success, ``False`` if the session was not found
-        (expired or never created).
-
-        Raises
-        ------
-        RuntimeError
-            If the HTTP request fails for a reason other than 404.
-        """
-        try:
-            response = self.session.post(
-                f"{self.base_url}/api/stream/{session_id}",
-                json={"code": code},
-                timeout=self.timeout,
-            )
-            if response.status_code == 404:
-                return False
-            response.raise_for_status()
-            return True
-        except requests.RequestException as e:
-            raise RuntimeError(f"Failed to push code to session {session_id}: {e}") from e
-
     def get_embed_html(self, snippet_id: str) -> str | None:
         """Fetch self-contained static HTML for an inline-method snippet.
 
