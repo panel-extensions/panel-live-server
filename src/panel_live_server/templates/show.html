@@ -165,17 +165,13 @@
         overflow: hidden;
       }
 
-      /* Retry state: collapse the tall empty iframe area to a small strip so a
-         failed attempt reads as a quiet "working" line, not a big empty box.
-         The layout must also drop its 100vh floor, otherwise the 1fr grid row
-         stays full-viewport tall and leaves a big empty gap below the strip. */
+      /* Retry state: collapse the iframe area to a small strip (and drop the layout's 100vh floor) so a failed attempt reads as a quiet "working" line, not a big empty box. */
       .layout.compact {
         min-height: 0;
         padding: 4px;
       }
 
-      /* During a retry there is nothing actionable — no URL, no code, zoom is
-         meaningless — so drop the toolbar and let the single strip carry it. */
+      /* During a retry nothing is actionable (no URL, no code, zoom is meaningless), so drop the toolbar and let the single strip carry it. */
       .layout.compact .toolbar {
         display: none;
       }
@@ -666,10 +662,7 @@
           iframe.src = currentUrl;
           startLoadTimer();
         } else if (parsedPayload && (parsedPayload.status === "retrying" || parsedPayload.status === "pending")) {
-          // A show() attempt did not render yet — the model is refining the code
-          // and will call show() again. Collapse the tall iframe area to a small
-          // strip and show a quiet, non-alarming working line (never a red error
-          // box). The real error detail stays on hover. Zoom is meaningless here.
+          // A show() attempt did not render yet — collapse to a small strip and show a quiet working line (never a red error box) while the model refines and retries.
           iframe.removeAttribute("srcdoc");
           iframe.src = "about:blank";
           iframe.style.display = "none";

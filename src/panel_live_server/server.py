@@ -105,10 +105,7 @@ def _run_validation(code: str, method: str) -> dict:
         except ExtensionError as e:
             result = {"valid": False, "layer": "extensions", "message": str(e)}
 
-    # method="server" renders only objects marked .servable(). Code that ends
-    # with a bare expression (e.g. `layout`) instead renders empty ("no servable
-    # objects found"). Catch it statically so it retries rather than showing a
-    # blank box.
+    # method="server" renders only .servable() objects; a bare-expression ending renders empty, so catch it statically and retry rather than show a blank box.
     if not result and method == "server" and ".servable()" not in code:
         result = {
             "valid": False,
@@ -646,9 +643,7 @@ async def show(
 
     await _ensure_client_ready(ctx)
 
-    # Static validation failure (syntax, security, packages, extensions):
-    # return a quiet retry payload instead of raising a loud error, so the App
-    # pane shows a friendly "Refining…" state while the model fixes the code.
+    # Static validation failure: return a quiet retry payload (not a loud error) so the App pane shows a friendly "Refining…" state while the model fixes the code.
     validation = _run_validation(code, method)
     if not validation["valid"]:
         return _retry_payload(
@@ -670,8 +665,7 @@ async def show(
         )
         url = _externalize_url(response.get("url", ""))
 
-        # Runtime failure: the server ran the code and it raised. Same quiet
-        # retry treatment — hand the traceback to the model, show no error box.
+        # Runtime failure: the code ran and raised — same quiet retry treatment, hand the traceback to the model, show no error box.
         if error_message := response.get("error_message", None):
             return _retry_payload(
                 name=name,
