@@ -183,73 +183,28 @@ def test_security_error_is_tool_error_subclass():
 
 
 @pytest.mark.asyncio
-async def test_show_returns_retry_payload_on_syntax_error():
-    """show(code=...) returns a quiet status='retrying' payload (no url) for syntax errors."""
+@pytest.mark.parametrize(
+    "code, method, layer, needle",
+    [
+        ("def bad syntax", "inline", "syntax", None),
+        ("import pickle\npickle.dumps({})", "inline", "security", "pickle"),
+        ("import _totally_fake_pkg_xyz_abc", "inline", "packages", None),
+        ("import panel as pn\npn.extension()\nlayout = pn.Row(pn.pane.Markdown('hi'))\nlayout", "server", "servable", None),
+        ("x = 1  # plotly visualization", "server", "extensions", None),
+    ],
+    ids=["syntax", "blocked-import", "missing-package", "server-no-servable", "missing-extension"],
+)
+async def test_show_returns_retry_payload(code, method, layer, needle):
+    """show() returns a quiet status='retrying' payload (no url) for each static-validation failure."""
     server_module._validation_cache.clear()
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("show", {"code": "def bad syntax"})
+    async with Client(mcp) as client:
+        result = await client.call_tool("show", {"code": code, "method": method})
         payload = json.loads(result.content[0].text)
         assert payload["status"] == "retrying"
-        assert payload["layer"] == "syntax"
+        assert payload["layer"] == layer
         assert "url" not in payload
-
-
-@pytest.mark.asyncio
-async def test_show_returns_retry_payload_on_blocked_import():
-    """show(code=...) returns status='retrying' with the security detail for blocked imports."""
-    server_module._validation_cache.clear()
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("show", {"code": "import pickle\npickle.dumps({})"})
-        payload = json.loads(result.content[0].text)
-        assert payload["status"] == "retrying"
-        assert payload["layer"] == "security"
-        assert "pickle" in payload["error_message"]
-        assert "url" not in payload
-
-
-@pytest.mark.asyncio
-async def test_show_returns_retry_payload_on_missing_package():
-    """show(code=...) returns status='retrying' with layer='packages' for missing packages."""
-    server_module._validation_cache.clear()
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc"})
-        payload = json.loads(result.content[0].text)
-        assert payload["status"] == "retrying"
-        assert payload["layer"] == "packages"
-        assert "url" not in payload
-
-
-@pytest.mark.asyncio
-async def test_show_returns_retry_payload_when_server_method_lacks_servable():
-    """show(method='server') without .servable() retries instead of rendering an empty box."""
-    server_module._validation_cache.clear()
-    code = "import panel as pn\npn.extension()\nlayout = pn.Row(pn.pane.Markdown('hi'))\nlayout"
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("show", {"code": code, "method": "server"})
-        payload = json.loads(result.content[0].text)
-        assert payload["status"] == "retrying"
-        assert payload["layer"] == "servable"
-        assert "url" not in payload
-
-
-@pytest.mark.asyncio
-async def test_show_returns_retry_payload_for_missing_extension_server_method():
-    """show(code=..., method='server') returns status='retrying' with layer='extensions'."""
-    server_module._validation_cache.clear()
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool(
-            "show",
-            {"code": "x = 1  # plotly visualization", "method": "server"},
-        )
-        payload = json.loads(result.content[0].text)
-        assert payload["status"] == "retrying"
-        assert payload["layer"] == "extensions"
-        assert "url" not in payload
+        if needle:
+            assert needle in payload["error_message"]
 
 
 @pytest.mark.asyncio

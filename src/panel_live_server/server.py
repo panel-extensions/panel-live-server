@@ -643,17 +643,13 @@ async def show(
 
     await _ensure_client_ready(ctx)
 
+    def _retry(layer: str, detail: str) -> str:
+        return _retry_payload(name=name, description=description, method=method, zoom=zoom, layer=layer, error_detail=detail)
+
     # Static validation failure: return a quiet retry payload (not a loud error) so the App pane shows a friendly "Refining…" state while the model fixes the code.
     validation = _run_validation(code, method)
     if not validation["valid"]:
-        return _retry_payload(
-            name=name,
-            description=description,
-            method=method,
-            zoom=zoom,
-            layer=validation.get("layer", "validation"),
-            error_detail=validation.get("message", "Validation failed."),
-        )
+        return _retry(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
     try:
         response = _client.create_snippet(
@@ -667,14 +663,7 @@ async def show(
 
         # Runtime failure: the code ran and raised — same quiet retry treatment, hand the traceback to the model, show no error box.
         if error_message := response.get("error_message", None):
-            return _retry_payload(
-                name=name,
-                description=description,
-                method=method,
-                zoom=zoom,
-                layer="runtime",
-                error_detail=error_message,
-            )
+            return _retry("runtime", error_message)
 
         payload = {
             "tool": "show",
