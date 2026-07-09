@@ -191,26 +191,13 @@
         overflow: hidden;
       }
 
-      /* Keep the text/glyph crisp above the shimmer sweep */
+      /* Keep the text/glyph on top of the overlay background */
       .iframe-wrapper.compact .loading-overlay > * {
         position: relative;
         z-index: 1;
       }
 
-      /* Skeleton shimmer — a soft light sweeps across while refining */
-      .iframe-wrapper.compact .loading-overlay::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, 0.08) 50%, transparent 75%);
-        transform: translateX(-100%);
-        animation: refine-sweep 1.7s ease-in-out infinite;
-        pointer-events: none;
-      }
-
-      @keyframes refine-sweep { to { transform: translateX(100%); } }
-
-      /* Animated mini bar-chart glyph — bars grow like a chart being built */
+      /* Static mini bar-chart glyph — no animation, just a still resting mark */
       .refine-bars {
         display: inline-flex;
         align-items: flex-end;
@@ -223,23 +210,12 @@
         width: 3px;
         border-radius: 1px;
         background: #6fc3d6;
-        animation: refine-grow 1.05s ease-in-out infinite;
       }
 
-      .refine-bars i:nth-child(1) { animation-delay: 0s; }
-      .refine-bars i:nth-child(2) { animation-delay: 0.18s; }
-      .refine-bars i:nth-child(3) { animation-delay: 0.36s; }
-      .refine-bars i:nth-child(4) { animation-delay: 0.54s; }
-
-      @keyframes refine-grow {
-        0%, 100% { height: 4px; opacity: 0.55; }
-        50% { height: 16px; opacity: 1; }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .iframe-wrapper.compact .loading-overlay::after,
-        .refine-bars i { animation: none; }
-      }
+      .refine-bars i:nth-child(1) { height: 7px; }
+      .refine-bars i:nth-child(2) { height: 12px; }
+      .refine-bars i:nth-child(3) { height: 16px; }
+      .refine-bars i:nth-child(4) { height: 10px; }
 
       iframe {
         width: 100%;
@@ -691,7 +667,7 @@
           loadingOverlay.innerHTML =
             '<span class="refine-bars"><i></i><i></i><i></i><i></i></span>' +
             "<span>" +
-            ((parsedPayload && parsedPayload.message) || "Refining visualization…") +
+            ((parsedPayload && parsedPayload.message) || "Render failed · Refining...") +
             "</span>";
         } else {
           hideSpinner();

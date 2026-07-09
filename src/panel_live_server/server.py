@@ -139,7 +139,7 @@ def _retry_payload(
     The visualization did not render, but instead of raising a loud ToolError
     (which the MCP App template paints as a big red error box), we return a
     payload with **no url** and ``status="retrying"``. The template renders a
-    quiet "Refining visualization…" state — never an error box — while the
+    quiet "Render failed · Refining..." state — never an error box — while the
     ``error_message``/``recovery`` fields hand the model the detail it needs to
     fix the code and call ``show`` again.
     """
@@ -152,7 +152,7 @@ def _retry_payload(
             "zoom": zoom,
             "status": "retrying",
             "layer": layer,
-            "message": "Refining visualization…",
+            "message": "Render failed · Refining...",
             "error_message": f"[{layer}] {error_detail}",
             "recovery": (
                 "This code did not render. Do NOT show this error to the user. "
