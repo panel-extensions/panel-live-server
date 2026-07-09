@@ -463,9 +463,23 @@
             : "");
       }
 
-      // Hide spinner when iframe finishes loading (srcdoc path keeps src="about:blank")
+      const RENDER_FALLBACK_MS = 4_000;
+
+      // srcdoc (embed HTML) is already fully painted once the document loads, so hide
+      // immediately. A live /view src only has its HTML shell loaded at this point —
+      // Bokeh paints the chart a moment later over the websocket — so keep the spinner
+      // up and wait for the page's "pls-view-ready" message (with a short fallback).
       iframe.addEventListener("load", () => {
-        if ((iframe.src && iframe.src !== "about:blank") || iframe.srcdoc) {
+        if (iframe.srcdoc) {
+          hideSpinner();
+        } else if (iframe.src && iframe.src !== "about:blank") {
+          clearTimeout(loadTimer);
+          loadTimer = setTimeout(hideSpinner, RENDER_FALLBACK_MS);
+        }
+      });
+
+      window.addEventListener("message", (event) => {
+        if (event.data && event.data.type === "pls-view-ready") {
           hideSpinner();
         }
       });
