@@ -635,9 +635,15 @@ async def show(
     global _manager, _client
 
     client_name = _get_mcp_client_name(ctx)
+    # Cowork runs as a local agent: the tool result counts against its model
+    # token budget, so its embed must stay under a tight cap.
     is_cowork = client_name.startswith("local-agent-mode-")
+    # Clients whose iframes can't reach the live Panel server and must render
+    # embedded HTML instead: Claude Desktop ("claude-ai", frame-src CSP) and
+    # Cowork ("local-agent-mode-<connector>", sandboxed iframe blocks the websocket).
     embed_only = client_name == "claude-ai" or is_cowork
 
+    # Clamp zoom to nearest valid level
     _valid_zooms = [25, 50, 75, 100]
     zoom = min(_valid_zooms, key=lambda z: abs(z - zoom))
 
