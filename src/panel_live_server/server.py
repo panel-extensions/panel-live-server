@@ -482,10 +482,7 @@ async def _ensure_client_ready(ctx: Context | None) -> None:
 
     if not _client:
         config = get_config()
-        raise ToolError(
-            f"Panel Live Server is not running. Restart the MCP server. "
-            f"Ensure port {config.port} is not already in use."
-        )
+        raise ToolError(f"Panel Live Server is not running. Restart the MCP server. Ensure port {config.port} is not already in use.")
 
     if not _client.is_healthy():
         if ctx:
@@ -495,10 +492,7 @@ async def _ensure_client_ready(ctx: Context | None) -> None:
             _client = DisplayClient(base_url=_manager.get_base_url())
         else:
             config = get_config()
-            raise ToolError(
-                f"Panel Live Server is not healthy and failed to restart. "
-                f"Kill any process on port {config.port} and restart the MCP server."
-            )
+            raise ToolError(f"Panel Live Server is not healthy and failed to restart. Kill any process on port {config.port} and restart the MCP server.")
 
 
 @mcp.tool(name="list_packages")
