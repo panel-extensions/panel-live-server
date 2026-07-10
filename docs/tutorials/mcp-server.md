@@ -30,11 +30,10 @@ Ask your AI assistant:
 
 > List your available MCP tools.
 
-You should see four tools in the response:
+You should see three tools in the response:
 
 - `list_packages`: lists what is installed in the server environment
-- `validate`: checks code before anything is rendered
-- `show`: renders the visualization and returns a live URL
+- `show`: validates the code, renders the visualization, and returns a live URL
 - `screenshot`: takes a picture of an already-rendered visualization so the AI can answer
   questions about how it looks
 
@@ -47,7 +46,7 @@ and save it as `penguins.csv`. Then ask your AI:
 
 > My dataset is penguins.csv. Show the distribution of the 'species' column as an interactive bar chart. Use the show tool.
 
-Your AI will typically call `validate` first to check the code, then `show` to render it.
+Your AI will call `show`, which validates the code and then renders it in one step.
 You'll see a response like:
 
 ```
@@ -138,12 +137,11 @@ for how to add it with `--with`.
 
 A typical AI-assisted session looks like this:
 
-1. The AI calls `validate` to check the code (syntax, security, package availability,
-   Panel extensions, and a runtime test run)
-2. The AI calls `show`, which sends the code to the Panel server via the REST API
-3. The Panel server stores and executes the snippet, returning a URL
-4. The URL is shown to you, click it to open the live visualization
-5. If you ask a question about how the result looks, the AI calls `screenshot` to see it
+1. The AI calls `show`, which first validates the code (syntax, security, package
+   availability, Panel extensions) and then sends it to the Panel server via the REST API
+2. The Panel server stores and executes the snippet, returning a URL
+3. The URL is shown to you, click it to open the live visualization
+4. If you ask a question about how the result looks, the AI calls `screenshot` to see it
    before answering
 
 See [Architecture](../explanation/architecture.md) for the full picture.
