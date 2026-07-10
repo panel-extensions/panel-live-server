@@ -11,6 +11,8 @@ from datetime import datetime
 from datetime import timezone
 
 import panel as pn
+from bokeh.events import DocumentReady
+from bokeh.models import CustomJS
 
 from panel_live_server.database import Snippet
 from panel_live_server.database import get_db
@@ -185,6 +187,15 @@ def view_page():
     Renders a single visualization by ID or slug from the query string parameter.
     Supports ?id=... or ?slug=... query parameters. If both are provided, id takes precedence.
     """
+    # The show.html iframe hides its loading spinner on this signal rather than on
+    # iframe "load", since "load" fires once the HTML shell arrives but Bokeh paints
+    # the chart a moment later over the websocket — hiding on "load" leaves a white flash.
+    if pn.state.curdoc:
+        pn.state.curdoc.js_on_event(
+            DocumentReady,
+            CustomJS(code="window.parent.postMessage({type: 'pls-view-ready'}, '*')"),
+        )
+
     # Get snippet ID or slug from query parameters using session_args
     snippet_id = ""
     slug = ""

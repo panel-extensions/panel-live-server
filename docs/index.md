@@ -27,12 +27,11 @@ Use whichever fits how you work, or run both.
 ## MCP Server: AI assistant integration
 
 Give Claude, GitHub Copilot, Cursor, or any MCP-compatible AI assistant the ability to render
-visualizations directly in your IDE, and to actually see what it just rendered. Four tools are
+visualizations directly in your IDE, and to actually see what it just rendered. Three tools are
 exposed:
 
 - **`list_packages`**: lists what is installed in the server environment, so the AI knows what it can use before writing any code
-- **`validate`**: checks code (syntax, security, package availability, Panel extensions, and a real runtime test run) before anything is rendered
-- **`show`**: executes the code and returns a live, interactive visualization, no manual setup required
+- **`show`**: validates the code (syntax, security, package availability, Panel extensions) and then executes it, returning a live, interactive visualization — no manual setup and no separate validation step required
 - **`screenshot`**: captures a picture of an already-rendered visualization and hands it back to the AI, so it can answer follow-up questions about how the chart looks by inspecting the actual image instead of guessing from raw data
 
 <video controls autoplay muted loop style="width: 100%; max-width: 100%;">
@@ -153,10 +152,9 @@ The Panel server runs as a managed subprocess with health monitoring and automat
 
 ### Validate before you render
 
-A dedicated `validate` tool runs four static checks (syntax, security, package
-availability, and Panel extension declarations) and returns a structured result before any
-rendering happens. `show` reuses the cached result automatically, so there is no
-double-validation overhead.
+`show` runs four static checks (syntax, security, package availability, and Panel extension
+declarations) automatically before it executes anything. Validation is built into the render
+path, so there is no separate step to call and no double-validation overhead.
 
 ### See it, don't guess
 

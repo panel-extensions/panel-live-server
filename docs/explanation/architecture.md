@@ -22,7 +22,7 @@ pls serve, Panel Server (subprocess, port 5077)
 Browser, /view  /feed  /add  /admin
 ```
 
-**MCP Server** (`pls mcp`): Hosts the `list_packages`, `validate`, `show`, and `screenshot`
+**MCP Server** (`pls mcp`): Hosts the `list_packages`, `show`, and `screenshot`
 MCP tools. Starts the Panel server as a subprocess and manages its lifecycle.
 
 **Panel Server** (`pls serve`): Executes Python code and serves visualizations as web pages.
@@ -34,7 +34,7 @@ Exposes a REST API and four browser-accessible pages.
 
 ## MCP Tools
 
-The MCP server exposes four tools to the AI assistant, meant to be used together in a
+The MCP server exposes three tools to the AI assistant, meant to be used together in a
 typical session.
 
 ### `list_packages`: see what's available
@@ -49,39 +49,27 @@ list_packages(category="visualization")            # filter by category
 list_packages(query="panel", include_versions=True)  # filter by name, with versions
 ```
 
-### `validate`: catch problems before rendering
+### `show`: validate, then render the visualization
 
-Runs a chain of checks against a snippet and returns a structured result, without creating
-any database entry or rendering anything:
+The primary tool for turning code into a live visualization. Validation is built in: before
+anything is stored or rendered, `show` runs a chain of static checks and, if any fail, returns
+a quiet "Refining…" retry payload instead of a broken render — no separate `validate` call is
+needed.
+
+The checks, in order:
 
 1. **Syntax**: `ast.parse()` catches syntax errors early
 2. **Security**: ruff security rules plus a blocked-import list
 3. **Package availability**: every import must already be installed in the server environment
 4. **Panel extensions**: required extensions declared via `pn.extension()` (`server` method
    only, the `inline` method injects them automatically)
-5. **Runtime execution**: the code actually runs in an isolated namespace to catch
-   `ValueError`, `TypeError`, `AttributeError`, and similar errors
 
-```python
-validate(code="df.hvplot.bar(x='Product', y='Sales')", method="inline")
-# -> {"valid": True}
-# or -> {"valid": False, "layer": "packages", "message": "..."}
-```
+When the checks pass, `show`:
 
-`show` reuses this cached result, so calling `validate` first avoids paying for the same
-checks twice.
-
-### `show`: render the visualization
-
-The primary tool for turning code into a live visualization. When called:
-
-1. The AI sends Python code via the `show` tool
-2. The code has already been checked by `validate` (or `show` runs the checks itself when
-   called with `quick=True`)
-3. The MCP server POSTs the snippet to the Panel server's `/api/snippet` endpoint
-4. The Panel server stores the snippet in SQLite and returns a URL
-5. The MCP server returns the URL to the AI assistant
-6. The user accesses the visualization via URL in their browser (or inline in the MCP App UI)
+1. POSTs the snippet to the Panel server's `/api/snippet` endpoint
+2. The Panel server stores the snippet in SQLite and returns a URL
+3. The MCP server returns the URL to the AI assistant
+4. The user accesses the visualization via URL in their browser (or inline in the MCP App UI)
 
 ```python
 show(
@@ -100,7 +88,6 @@ The tool accepts:
 - **description**: One-sentence explanation
 - **method**: Execution method, `"inline"` (default) or `"server"`
 - **zoom**: Initial zoom level, `25`, `50`, `75`, or `100`
-- **quick**: If `True`, runs full validation inline instead of requiring a prior `validate` call
 
 ### `screenshot`: see the result, don't guess
 

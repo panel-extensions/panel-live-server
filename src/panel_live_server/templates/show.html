@@ -165,6 +165,58 @@
         overflow: hidden;
       }
 
+      /* Retry state: collapse the iframe area to a small strip (and drop the layout's 100vh floor) so a failed attempt reads as a quiet "working" line, not a big empty box. */
+      .layout.compact {
+        min-height: 0;
+        padding: 4px;
+      }
+
+      /* During a retry nothing is actionable (no URL, no code, zoom is meaningless), so drop the toolbar and let the single strip carry it. */
+      .layout.compact .toolbar {
+        display: none;
+      }
+
+      .iframe-wrapper.compact {
+        min-height: 0;
+        height: 34px;
+      }
+
+      .iframe-wrapper.compact .loading-overlay {
+        justify-content: flex-start;
+        padding-left: 12px;
+        gap: 10px;
+        background: rgba(128, 128, 128, 0.06);
+        border: 1px solid rgba(120, 120, 120, 0.18);
+        opacity: 1;
+        overflow: hidden;
+      }
+
+      /* Keep the text/glyph on top of the overlay background */
+      .iframe-wrapper.compact .loading-overlay > * {
+        position: relative;
+        z-index: 1;
+      }
+
+      /* Static mini bar-chart glyph — no animation, just a still resting mark */
+      .refine-bars {
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 2.5px;
+        height: 16px;
+        flex-shrink: 0;
+      }
+
+      .refine-bars i {
+        width: 3px;
+        border-radius: 1px;
+        background: #6fc3d6;
+      }
+
+      .refine-bars i:nth-child(1) { height: 7px; }
+      .refine-bars i:nth-child(2) { height: 12px; }
+      .refine-bars i:nth-child(3) { height: 16px; }
+      .refine-bars i:nth-child(4) { height: 10px; }
+
       iframe {
         width: 100%;
         height: 100%;
@@ -286,9 +338,8 @@
   <body>
     <div class="layout">
       <div class="iframe-wrapper">
-        <div id="loading-overlay" class="loading-overlay">
+        <div id="loading-overlay" class="loading-overlay hidden" role="status" aria-label="Loading">
           <div class="spinner"></div>
-          <span>Loading visualization…</span>
         </div>
         <div id="error-panel" class="error-panel">
           <div class="error-header">✗ Validation Error</div>
@@ -326,6 +377,8 @@
 
       const messageEl = document.getElementById("message");
       const iframe = document.getElementById("view");
+      const layout = document.querySelector(".layout");
+      const iframeWrapper = document.querySelector(".iframe-wrapper");
       const loadingOverlay = document.getElementById("loading-overlay");
       const errorPanel = document.getElementById("error-panel");
       const errorBody = document.getElementById("error-body");
@@ -373,8 +426,7 @@
         loadTimer = null;
         loadingOverlay.classList.add("hidden");
         loadingOverlay.classList.remove("blocked");
-        loadingOverlay.innerHTML =
-          '<div class="spinner"></div><span>Loading visualization…</span>';
+        loadingOverlay.innerHTML = "";
       }
 
       function showBlockedFallback() {
@@ -387,9 +439,23 @@
             : "");
       }
 
-      // Hide spinner when iframe finishes loading (srcdoc path keeps src="about:blank")
+      const RENDER_FALLBACK_MS = 4_000;
+
+      // srcdoc (embed HTML) is already fully painted once the document loads, so hide
+      // immediately. A live /view src only has its HTML shell loaded at this point —
+      // Bokeh paints the chart a moment later over the websocket — so keep the spinner
+      // up and wait for the page's "pls-view-ready" message (with a short fallback).
       iframe.addEventListener("load", () => {
-        if ((iframe.src && iframe.src !== "about:blank") || iframe.srcdoc) {
+        if (iframe.srcdoc) {
+          hideSpinner();
+        } else if (iframe.src && iframe.src !== "about:blank") {
+          clearTimeout(loadTimer);
+          loadTimer = setTimeout(hideSpinner, RENDER_FALLBACK_MS);
+        }
+      });
+
+      window.addEventListener("message", (event) => {
+        if (event.data && event.data.type === "pls-view-ready") {
           hideSpinner();
         }
       });
@@ -534,6 +600,8 @@
         // Reset all panels
         errorPanel.classList.remove("visible");
         panelPlaceholder.classList.remove("visible");
+        iframeWrapper.classList.remove("compact");
+        layout.classList.remove("compact");
         zoomButtons.forEach(({ btn }) => btn.style.display = "");
 
         if (currentEmbedHtmlGz) {
@@ -579,11 +647,28 @@
         } else if (currentUrl) {
           iframe.style.display = "";
           loadingOverlay.classList.remove("hidden");
-          loadingOverlay.innerHTML =
-            '<div class="spinner"></div><span>Loading visualization…</span>';
+          loadingOverlay.innerHTML = '<div class="spinner"></div>';
           iframe.removeAttribute("srcdoc");
           iframe.src = currentUrl;
           startLoadTimer();
+        } else if (parsedPayload && (parsedPayload.status === "retrying" || parsedPayload.status === "pending")) {
+          // A show() attempt did not render yet — collapse to a small strip and show a quiet working line (never a red error box) while the model refines and retries.
+          iframe.removeAttribute("srcdoc");
+          iframe.src = "about:blank";
+          iframe.style.display = "none";
+          errorPanel.classList.remove("visible");
+          iframeWrapper.classList.add("compact");
+          layout.classList.add("compact");
+          zoomButtons.forEach(({ btn }) => btn.style.display = "none");
+          clearTimeout(loadTimer);
+          loadTimer = null;
+          loadingOverlay.classList.remove("hidden");
+          loadingOverlay.classList.remove("blocked");
+          loadingOverlay.innerHTML =
+            '<span class="refine-bars"><i></i><i></i><i></i><i></i></span>' +
+            "<span>" +
+            ((parsedPayload && parsedPayload.message) || "Render failed · Refining...") +
+            "</span>";
         } else {
           hideSpinner();
           iframe.src = "about:blank";

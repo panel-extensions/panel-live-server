@@ -58,11 +58,6 @@ _client: DisplayClient | None = None
 # Validation cache: (code, method) → result dict. Session-scoped; reset on restart.
 _validation_cache: dict[tuple[str, str], dict] = {}
 
-# Tracks (code, method) pairs that have passed *full* validation (static + runtime)
-# via an explicit ``validate()`` call. Used by ``show(quick=False)`` to enforce
-# the two-step workflow.
-_fully_validated: set[tuple[str, str]] = set()
-
 
 def _run_validation(code: str, method: str) -> dict:
     """Run static validation layers and cache the result by (code, method).
@@ -110,6 +105,19 @@ def _run_validation(code: str, method: str) -> dict:
         except ExtensionError as e:
             result = {"valid": False, "layer": "extensions", "message": str(e)}
 
+    # method="server" renders only .servable() objects; a bare-expression ending renders empty, so catch it statically and retry rather than show a blank box.
+    if not result and method == "server" and ".servable()" not in code:
+        result = {
+            "valid": False,
+            "layer": "servable",
+            "message": (
+                "method='server' only displays objects marked with .servable(), "
+                "but the code calls it nowhere. Either mark the app servable "
+                "(e.g. `layout.servable()`), or call show() with method='inline' "
+                "and end the code with the object as the last expression."
+            ),
+        }
+
     if not result:
         result = {"valid": True}
 
@@ -117,20 +125,42 @@ def _run_validation(code: str, method: str) -> dict:
     return result
 
 
-def _raise_validation_error(validation: dict) -> None:
-    """Raise the appropriate ``SecurityError`` or ``ValidationError`` for a failed validation result."""
-    layer = validation.get("layer", "")
-    message = validation.get("message", "Validation failed.")
-    if layer == "security":
-        raise SecurityError(message)
-    elif layer == "syntax":
-        raise ValidationError(f"[syntax] {message}")
-    elif layer == "packages":
-        raise ValidationError(f"[packages] {message}")
-    elif layer == "extensions":
-        raise ValidationError(f"[extensions] {message}\nAdd the missing pn.extension(...) call to your code.")
-    else:
-        raise ValidationError(message)
+def _retry_payload(
+    *,
+    name: str,
+    description: str,
+    method: str,
+    zoom: int,
+    layer: str,
+    error_detail: str,
+) -> str:
+    """Build a friendly ``status="retrying"`` payload for a failed show() attempt.
+
+    The visualization did not render, but instead of raising a loud ToolError
+    (which the MCP App template paints as a big red error box), we return a
+    payload with **no url** and ``status="retrying"``. The template renders a
+    quiet "Render failed · Refining..." state — never an error box — while the
+    ``error_message``/``recovery`` fields hand the model the detail it needs to
+    fix the code and call ``show`` again.
+    """
+    return json.dumps(
+        {
+            "tool": "show",
+            "name": name,
+            "description": description,
+            "method": method,
+            "zoom": zoom,
+            "status": "retrying",
+            "layer": layer,
+            "message": "Render failed · Refining...",
+            "error_message": f"[{layer}] {error_detail}",
+            "recovery": (
+                "This code did not render. Do NOT show this error to the user. "
+                "Fix the problem described above and call show() again with corrected code. "
+                "Only report to the user once show() succeeds."
+            ),
+        }
+    )
 
 
 def _externalize_url(url: str) -> str:
@@ -304,20 +334,16 @@ mcp = FastMCP(
     instructions=(
         "Panel Live Server executes Python code snippets and renders the resulting "
         "visualizations as live, interactive web pages.\n\n"
-        "WORKFLOWS — choose one based on complexity:\n\n"
-        "QUICK (simple plots): Call `show(code, name, quick=True)`. "
-        "Runs full validation inline and renders in one step. "
-        "Use for straightforward plots with well-known libraries.\n\n"
-        "STANDARD (complex apps / unfamiliar code):\n"
-        "1. DISCOVER: Call `list_packages()` (once per session) to see what Python "
-        "   packages are installed. The environment is fixed and cannot be modified. "
-        "   By default it returns the ~30 core visualization, data, and panel packages.\n"
-        "2. VALIDATE: Call `validate(code, method)` before `show`. "
-        "   It runs static checks AND executes the code to catch runtime errors. "
-        '   Fix any issues and re-validate until it returns `{"valid": true}`. '
-        "   Results are cached — `show` reuses them with zero overhead.\n"
-        "3. SHOW: Call `show(code, name, description, method, zoom)` to render. "
-        "   `show` will raise an error if `validate()` was not called first.\n\n"
+        "WORKFLOW:\n"
+        "1. DISCOVER (once per session): Call `list_packages()` to see what Python\n"
+        "   packages are installed. The environment is fixed and cannot be modified.\n"
+        "2. SHOW: Call `show(code, name, method)` to render a visualization.\n"
+        "   Static validation (syntax, security, packages) runs in ~50 ms.\n"
+        "   The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
+        "DO NOT write the visualization code to a file, script, notebook, or `examples/`\n"
+        "directory, and do not run it in a separate shell/REPL. Pass the code string\n"
+        "straight to `show(code=...)` — it executes the code for you. Creating files\n"
+        "clutters the user's repository and is not wanted.\n\n"
         "LIBRARY SELECTION (prefer in this order when suitable):\n"
         "- hvPlot: quick interactive plots from DataFrames (.plot API)\n"
         "- HoloViews: advanced composable, interactive visualizations\n"
@@ -444,6 +470,31 @@ _PACKAGE_CATEGORIES["core"] = _PACKAGE_CATEGORIES["visualization"] | _PACKAGE_CA
 # --- Tools ---
 
 
+async def _ensure_client_ready(ctx: Context | None) -> None:
+    """Lazily start the Panel server if not running, then verify health. Raises ToolError on failure."""
+    global _manager, _client
+
+    if not _client:
+        logger.warning("Panel Live Server client is not initialized — attempting lazy startup")
+        _manager, _client = _start_panel_server()
+        if _manager:
+            atexit.register(_cleanup)
+
+    if not _client:
+        config = get_config()
+        raise ToolError(f"Panel Live Server is not running. Restart the MCP server. Ensure port {config.port} is not already in use.")
+
+    if not _client.is_healthy():
+        if ctx:
+            await ctx.info("Panel Live Server is not healthy, attempting restart...")
+        if _manager and _manager.restart():
+            _client.close()
+            _client = DisplayClient(base_url=_manager.get_base_url())
+        else:
+            config = get_config()
+            raise ToolError(f"Panel Live Server is not healthy and failed to restart. Kill any process on port {config.port} and restart the MCP server.")
+
+
 @mcp.tool(name="list_packages")
 async def list_packages(
     category: str = "core",
@@ -516,59 +567,6 @@ async def list_packages(
     return [p["name"] for p in pkgs]
 
 
-@mcp.tool(name="validate")
-async def validate(
-    code: str,
-    method: Literal["inline", "server"] = "inline",
-    ctx: Context | None = None,
-) -> dict:
-    """Validate Python visualization code — ALWAYS call before show().
-
-    Runs static checks AND executes the code to catch both compile-time and
-    runtime errors before the visualization is created. This prevents failed
-    renders and wasted round-trips.
-
-    Checks performed (in order):
-    1. Syntax — ``ast.parse``
-    2. Security — ruff security rules + blocked-import list
-    3. Package availability — all imports must be installed in this environment
-    4. Panel extensions — declared via ``pn.extension()`` (``server`` method only;
-       ``inline`` method auto-injects extensions so no declaration is needed)
-    5. Runtime execution — runs the code in an isolated namespace to catch
-       ``ValueError``, ``TypeError``, ``AttributeError``, import failures, etc.
-
-    Parameters
-    ----------
-    code : str
-        Python code to validate.
-    method : {"inline", "server"}, default "inline"
-        Execution method — same as the ``method`` parameter of ``show``.
-
-    Returns
-    -------
-    dict
-        ``{"valid": True}`` on success, or
-        ``{"valid": False, "layer": "...", "message": "..."}`` describing the
-        first failing check. Layers: ``"syntax"``, ``"security"``,
-        ``"packages"``, ``"extensions"``, ``"runtime"``.
-    """
-    from panel_live_server.utils import validate_code
-
-    # Static checks (cached)
-    result = _run_validation(code, method)
-    if not result["valid"]:
-        return result
-
-    # Runtime execution check — always runs to catch ValueError, TypeError, etc.
-    error = await asyncio.to_thread(validate_code, code)
-    if error:
-        return {"valid": False, "layer": "runtime", "message": error}
-
-    # Mark as fully validated so show(quick=False) can proceed.
-    _fully_validated.add((code, method))
-    return {"valid": True}
-
-
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
 async def show(
     code: str,
@@ -576,66 +574,52 @@ async def show(
     description: str = "",
     method: Literal["inline", "server"] = "inline",
     zoom: int = 75,
-    quick: bool = False,
     ctx: Context | None = None,
 ) -> str:
     """Display Python code as a live, interactive visualization.
 
-    Two usage modes:
+    Runs static validation (syntax, security, packages, extensions) in ~50 ms,
+    stores the snippet, and returns the visualization URL. The iframe loads
+    immediately via Panel's WebSocket — the user sees a loading indicator then
+    the rendered visualization, with no prior ``validate()`` call needed.
 
-    - **Quick** (``quick=True``): one-shot — runs full validation (static +
-      runtime) inline. No prior ``validate()`` call needed. Ideal for simple
-      plots with well-known libraries.
-    - **Standard** (``quick=False``, default): expects ``validate(code, method)``
-      to have been called first. ``show`` reuses the cached static validation
-      with zero overhead.
+    Always call this tool when the user asks to show, display, plot, or
+    visualize anything.
 
-    In both modes, validation failures raise ``SecurityError`` or
-    ``ValidationError`` — the MCP App is only returned on success.
+    IMPORTANT — pass the Python code DIRECTLY as the ``code`` argument. Do NOT
+    write it to a file in the user's project first, do NOT create scripts,
+    notebooks, or ``examples/`` files, and do NOT run it in a separate shell.
+    This tool executes the code itself; creating files is unwanted side-effect
+    clutter in the user's repository.
 
-    Executes Python code and renders the result in a Panel web interface.
-    Always call this tool when the user asks to show, display, plot, or visualize anything.
+    IMPORTANT — always provide a short ``name`` (e.g. "Temperature chart") so
+    the visualization is easy to find in the feed.
 
-    IMPORTANT — always provide a short `name` (e.g. "Temperature chart") so the
-    visualization can be identified in the feed. The `description` is optional but helpful.
-
-    IMPORTANT — after calling this tool, always present the returned `url` to the user
-    as a clickable Markdown link: [Show Visualization](url)
+    IMPORTANT — after calling this tool, always present the returned ``url`` to
+    the user as a clickable Markdown link: ``[Show Visualization](url)``
 
     Parameters
     ----------
     code : str
         Python code to execute.
-        For "inline" method: the LAST expression is displayed. It must be at column 0
-        (fully dedented — no leading whitespace or indentation).
-        For "server" method: call .servable() on the objects you want displayed.
+        For ``"inline"`` method: the last expression is displayed. It must be
+        fully dedented (no leading whitespace on top-level statements).
+        For ``"server"`` method: call ``.servable()`` on objects to display.
     name : str, optional
-        Short descriptive name shown in the visualization feed (e.g. "Sales chart 2024").
+        Short display name shown in the feed (e.g. "Sales chart 2024").
         Always provide this — unnamed visualizations are hard to track.
     description : str, optional
         One-sentence description of what the visualization shows.
     method : {"inline", "server"}, default "inline"
         Execution mode:
-        - "inline": displays the last expression's result. Use for standard plots,
-          dataframes, and objects that do NOT import panel directly.
-        - "server": displays objects marked `.servable()`. Use when the code imports
-          and uses Panel to build dashboards, apps, or complex layouts.
+
+        - ``"inline"``: displays the last expression's result. Use for standard
+          plots, DataFrames, and objects that do NOT import Panel directly.
+        - ``"server"``: displays objects marked ``.servable()``. Use when the
+          code imports and uses Panel to build dashboards or complex layouts.
     zoom : {100, 75, 50, 25}, default 75
-        Initial zoom level for the visualization preview.
-        Default to 75 for most visualizations — it fits the majority of charts
-        and dashboards comfortably in the preview pane. Only deviate when needed:
-        - 100: tiny widgets, single-value displays, or very small plots where
-          75 would make text unreadable.
-        - 75: use for almost everything — simple charts, multi-panel layouts,
-          dataframes, moderate dashboards. This is the recommended default.
-        - 50: full-page template apps (FastListTemplate, MaterialTemplate, etc.)
-          with header + sidebar + main area.
-        - 25: very large or wide apps designed for big screens; use when 50 still
-          feels cramped in the preview pane.
-    quick : bool, default False
-        If ``True``, run full validation (static checks + runtime execution)
-        inline before rendering — no prior ``validate()`` call needed.
-        Use for simple, well-known visualizations to save a round-trip.
+        Initial zoom level for the preview pane. 75 fits most charts and
+        dashboards. Use 50 for full-page templates, 25 for very wide apps.
 
     Returns
     -------
@@ -657,65 +641,31 @@ async def show(
     _valid_zooms = [25, 50, 75, 100]
     zoom = min(_valid_zooms, key=lambda z: abs(z - zoom))
 
-    if quick:
-        # Quick mode: run full validation (static + runtime) inline.
-        validation = _run_validation(code, method)
-        if not validation["valid"]:
-            _raise_validation_error(validation)
+    await _ensure_client_ready(ctx)
 
-        from panel_live_server.utils import validate_code
+    def _retry(layer: str, detail: str) -> str:
+        return _retry_payload(name=name, description=description, method=method, zoom=zoom, layer=layer, error_detail=detail)
 
-        runtime_error = await asyncio.to_thread(validate_code, code)
-        if runtime_error:
-            raise ValidationError(f"[runtime] {runtime_error}")
-    else:
-        # Standard mode: validate() must have been called first.
-        key = (code, method)
-        if key not in _fully_validated:
-            raise ValidationError("Code has not been validated yet. Call validate(code, method) before show(), or use quick=True to run validation inline.")
-        # Re-check static validation from cache (zero-cost).
-        validation = _run_validation(code, method)
-        if not validation["valid"]:
-            _raise_validation_error(validation)
+    # Static validation failure: return a quiet retry payload (not a loud error) so the App pane shows a friendly "Refining…" state while the model fixes the code.
+    validation = _run_validation(code, method)
+    if not validation["valid"]:
+        return _retry(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
-    if not _client:
-        # The Panel server was not available at MCP startup (e.g. the port was
-        # transiently occupied by an orphan from a previous session). Rather than
-        # staying permanently broken for the life of this process, retry the
-        # startup lazily here so the tool can self-heal on the next call.
-        logger.warning("Panel Live Server client is not initialized — attempting lazy startup")
-        _manager, _client = _start_panel_server()
-        if _manager:
-            atexit.register(_cleanup)
-
-    if not _client:
-        config = get_config()
-        raise ToolError(f"Panel Live Server is not running. Restart the MCP server. Ensure port {config.port} is not already in use.")
-
-    # Check health with restart logic
-    if not _client.is_healthy():
-        if ctx:
-            await ctx.info("Panel Live Server is not healthy, attempting restart...")
-
-        if _manager and _manager.restart():
-            _client.close()
-            _client = DisplayClient(base_url=_manager.get_base_url())
-        else:
-            config = get_config()
-            raise ToolError(f"Panel Live Server is not healthy and failed to restart. Kill any process on port {config.port} and restart the MCP server.")
-
-    # Send request to Panel server
     try:
         response = _client.create_snippet(
             code=code,
             name=name,
             description=description,
             method=method,
-            validated=True,
+            validated=False,
         )
         url = _externalize_url(response.get("url", ""))
 
-        payload: dict[str, str | int | bool] = {
+        # Runtime failure: the code ran and raised — same quiet retry treatment, hand the traceback to the model, show no error box.
+        if error_message := response.get("error_message", None):
+            return _retry("runtime", error_message)
+
+        payload = {
             "tool": "show",
             "name": name,
             "description": description,
@@ -725,18 +675,8 @@ async def show(
             "code": code,
         }
 
-        if error_message := response.get("error_message", None):
-            # Runtime error detected at storage time — raise so the LLM gets a
-            # clear text error instead of a blank App pane.
-            raise ToolError(f"Visualization created but failed at runtime:\n{error_message}\nFix the code and try again.")
-
         snippet_id = response.get("id", "")
 
-        # Embed the rendered output as srcdoc so it displays inline without a live
-        # websocket back to the Panel server — needed only by clients whose iframe
-        # can't reach the server: Claude Desktop (frame-src CSP) and Cowork
-        # (sandboxed iframe). Clients that can reach the server (VS Code, Cursor,
-        # Claude Code) skip the embed and use the live URL already in the payload.
         if embed_only and snippet_id:
             embed_html = await asyncio.to_thread(_client.get_embed_html, snippet_id)
             cap = _COWORK_EMBED_SIZE_CAP if is_cowork else _EMBED_SIZE_CAP
@@ -762,17 +702,14 @@ async def show(
     except ValidationError:
         raise
     except (SyntaxError, ExtensionError) as e:
-        # Defensive fallback: _run_validation() should have caught these already.
         raise ValidationError(str(e)) from e
-
     except ValueError as e:
         raise ValidationError(
             f"[packages] {e}\nDo NOT install packages or change the environment. "
             "Call list_packages to see what is available, then rewrite using an installed library."
         ) from e
-
     except Exception as e:
-        logger.exception(f"Error creating visualization: {e}")
+        logger.exception("Error creating visualization: %s", e)
         if ctx:
             await ctx.error(f"Failed to create visualization: {e}")
         raise ToolError(f"Failed to create visualization: {e!s}. Check that the Panel server is running and the code is valid Python.") from e

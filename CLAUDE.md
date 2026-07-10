@@ -95,10 +95,10 @@ src/panel_live_server/
 
 ## MCP Tools
 
-- **`show(code, name, description, method, zoom)`** — execute Python, return visualization URL
+- **`show(code, name, description, method, zoom)`** — validate then execute Python, return visualization URL
+  - Runs static validation (syntax, security, packages, extensions) internally before rendering; no separate `validate` tool
   - `method`: `"inline"` (last expression displayed) or `"server"` (explicit `.servable()`)
   - `zoom`: `25 | 50 | 75 | 100`
-- **`validate(code, method)`** — static + runtime validation before show; caches result
 - **`screenshot(code, name, description, method, width, height, full_page)`** — visual validation; renders in headless browser and returns a PNG to the LLM (not the user) so it can inspect layout/appearance before calling `show`
 - **`list_packages()`** — list installed Python packages with versions
 
