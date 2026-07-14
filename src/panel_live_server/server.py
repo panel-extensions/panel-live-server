@@ -335,25 +335,27 @@ mcp = FastMCP(
         "Panel Live Server executes Python code snippets and renders the resulting "
         "visualizations as live, interactive web pages.\n\n"
         "WORKFLOW:\n"
-        "1. DISCOVER (once per session): Call `list_packages()` to see what Python\n"
-        "   packages are installed. The environment is fixed and cannot be modified.\n"
-        "2. SHOW: Call `show(code, name, method)` to render a visualization.\n"
-        "   Static validation (syntax, security, packages) runs in ~50 ms.\n"
-        "   The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
+        "Call `show(code, name, method)` to render a visualization.\n"
+        "Static validation (syntax, security, packages) runs in ~50 ms.\n"
+        "The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
         "DO NOT write the visualization code to a file, script, notebook, or `examples/`\n"
         "directory, and do not run it in a separate shell/REPL. Pass the code string\n"
         "straight to `show(code=...)` — it executes the code for you. Creating files\n"
         "clutters the user's repository and is not wanted.\n\n"
-        "LIBRARY SELECTION (prefer in this order when suitable):\n"
-        "- hvPlot: quick interactive plots from DataFrames (.plot API)\n"
+        "LIBRARY SELECTION:\n"
+        "PRIMARILY write visualizations with HoloViz packages — they integrate best with\n"
+        "the live server and are ALWAYS installed:\n"
+        "- hvPlot: quick interactive plots from DataFrames (.hvplot API)\n"
         "- HoloViews: advanced composable, interactive visualizations\n"
         "- Panel: dashboards, data apps, complex layouts (use method='server')\n"
-        "- Matplotlib: publication-quality static plots\n"
-        "- Plotly: interactive charts with 3D, hover\n"
-        "- ECharts (pn.pane.ECharts): modern business-quality charts with data transitions and animations\n"
-        "- Bokeh: low-level interactive web plots\n"
-        "- deck.gl (pn.pane.DeckGL): large-scale geospatial and 3D data visualization\n"
-        "Always verify the library is installed via `list_packages` first.\n\n" + _CLAUDE_DESKTOP_INSTRUCTIONS + "OUTPUT\n"
+        "Also always available (no extra package needed):\n"
+        "- Bokeh: HoloViz's default backend, for low-level interactive web plots\n"
+        "- ECharts (pn.pane.ECharts): business-quality charts with transitions/animations, from a spec dict\n"
+        "- deck.gl (pn.pane.DeckGL): large-scale geospatial and 3D visualization, from a spec dict\n"
+        "Other well-known libraries (Matplotlib, Plotly, seaborn, Altair) are installed ONLY\n"
+        "when the optional 'pydata' dependencies are present, so they may be MISSING — prefer\n"
+        "HoloViz. You do NOT need to check availability up front: if an import is not installed,\n"
+        "`show` returns the validation error — read it and rewrite using a HoloViz package.\n\n" + _CLAUDE_DESKTOP_INSTRUCTIONS + "OUTPUT\n"
         "After calling `show`, ALWAYS present the returned URL to the user as a "
         "clickable Markdown link: [Show Visualization](url)\n\n"
         "ERRORS\n"
@@ -412,61 +414,6 @@ def show_view() -> str:
     return SHOW_TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
-# --- Package categories for list_packages filtering ---
-
-_PACKAGE_CATEGORIES: dict[str, set[str]] = {
-    "visualization": {
-        "altair",
-        "bokeh",
-        "colorcet",
-        "datashader",
-        "geoviews",
-        "great-tables",
-        "holoviews",
-        "hvplot",
-        "matplotlib",
-        "panel",
-        "panel-graphic-walker",
-        "panel-material-ui",
-        "plotly",
-        "plotnine",
-        "pydeck",
-        "seaborn",
-        "vega-datasets",
-    },
-    "data": {
-        "duckdb",
-        "numpy",
-        "pandas",
-        "polars",
-        "pyarrow",
-        "scipy",
-        "scikit-learn",
-        "scikit-image",
-        "xarray",
-        "shapely",
-        "yfinance",
-        "hvsampledata",
-        "pooch",
-    },
-    "panel": {
-        "panel",
-        "panel-material-ui",
-        "panel-graphic-walker",
-        "panel-full-calendar",
-        "panel-neuroglancer",
-        "panel-precision-slider",
-        "panel-splitjs",
-        "panel-web-llm",
-        "param",
-        "pyviz-comms",
-    },
-}
-
-# "core" is the union of all named categories — used as the default.
-_PACKAGE_CATEGORIES["core"] = _PACKAGE_CATEGORIES["visualization"] | _PACKAGE_CATEGORIES["data"] | _PACKAGE_CATEGORIES["panel"]
-
-
 # --- Tools ---
 
 
@@ -493,78 +440,6 @@ async def _ensure_client_ready(ctx: Context | None) -> None:
         else:
             config = get_config()
             raise ToolError(f"Panel Live Server is not healthy and failed to restart. Kill any process on port {config.port} and restart the MCP server.")
-
-
-@mcp.tool(name="list_packages")
-async def list_packages(
-    category: str = "core",
-    query: str = "",
-    include_versions: bool = False,
-    ctx: Context | None = None,
-) -> list[str] | list[dict[str, str]]:
-    """List Python packages installed in the server environment.
-
-    IMPORTANT — call this tool ONCE at the start of every session before writing
-    any visualization code, so you know exactly what libraries are available.
-    The environment is fixed — packages cannot be installed or changed.
-
-    Parameters
-    ----------
-    category : str, optional
-        Comma-separated list of categories to filter by.
-        Valid categories: ``"visualization"``, ``"data"``, ``"panel"``, ``"core"``.
-        Default ``"core"`` returns the union of visualization + data + panel
-        (~30 packages). Use ``""`` (empty string) to return all installed packages.
-    query : str, optional
-        Case-insensitive substring filter on package name.
-        Example: ``"panel"`` returns only packages with "panel" in their name.
-    include_versions : bool, optional
-        If ``True``, return ``{"name": ..., "version": ...}`` dicts.
-        Default ``False`` returns a flat list of package name strings to
-        minimize context window usage.
-
-    Returns
-    -------
-    list[str] | list[dict[str, str]]
-        Sorted list of package names (default) or ``{"name": ..., "version": ...}``
-        dicts when ``include_versions=True``.
-
-    Examples
-    --------
-    >>> list_packages()
-    ["bokeh", "hvplot", "numpy", "panel", ...]
-    >>> list_packages(category="visualization")
-    ["bokeh", "matplotlib", ...]
-    >>> list_packages(category="")  # all installed packages
-    ["aiofile", "anyio", ...]
-    >>> list_packages(query="panel", include_versions=True)
-    [{"name": "panel", "version": "1.6.0"}, ...]
-    """
-    from importlib.metadata import distributions
-
-    pkgs = sorted(
-        ({"name": dist.metadata["Name"], "version": dist.metadata["Version"]} for dist in distributions()),
-        key=lambda d: d["name"].lower().replace("-", "_"),
-    )
-
-    # Filter by category
-    if category:
-        requested = {c.strip().lower() for c in category.split(",") if c.strip()}
-        allowed_names: set[str] = set()
-        for cat in requested:
-            if cat in _PACKAGE_CATEGORIES:
-                allowed_names |= _PACKAGE_CATEGORIES[cat]
-        if allowed_names:
-            pkgs = [p for p in pkgs if p["name"].lower().replace("_", "-") in allowed_names]
-
-    # Filter by name substring
-    if query:
-        query_lower = query.lower()
-        pkgs = [p for p in pkgs if query_lower in p["name"].lower()]
-
-    if include_versions:
-        return pkgs
-    return [p["name"] for p in pkgs]
 
 
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
@@ -706,13 +581,16 @@ async def show(
     except ValueError as e:
         raise ValidationError(
             f"[packages] {e}\nDo NOT install packages or change the environment. "
-            "Call list_packages to see what is available, then rewrite using an installed library."
+            "Rewrite using a HoloViz package (hvPlot, HoloViews, Panel) or another well-known installed library."
         ) from e
     except Exception as e:
+        # Panel-server / HTTP failures (e.g. 400 from /api/snippet, server
+        # unreachable) get the same quiet treatment as validation and runtime
+        # errors: return a "retrying" payload so the App pane shows the small
+        # "Render failed · Refining..." pill instead of a big error box inside
+        # the iframe. The model still receives the detail via error_message.
         logger.exception("Error creating visualization: %s", e)
-        if ctx:
-            await ctx.error(f"Failed to create visualization: {e}")
-        raise ToolError(f"Failed to create visualization: {e!s}. Check that the Panel server is running and the code is valid Python.") from e
+        return _retry("render", f"{e!s}. Check that the Panel server is running and the code is valid Python.")
 
 
 @mcp.tool(name="screenshot")
@@ -777,7 +655,7 @@ async def screenshot(
         · histogram        → "where is the distribution centered?"
         · any chart        → "what color is X?", "what does the legend say?"
 
-    Typical loop: `validate` → `show` (returns id) → `screenshot(snippet_id=id)`
+    Typical loop: `show` (returns id) → `screenshot(snippet_id=id)`
     when the user asks something visual you can't read off the code.
 
     Parameters

@@ -132,9 +132,10 @@ terminal. By the end, `pls --version` will print the installed version.
     # typically: .\venv\Scripts\pls.exe
     ```
 
-The `[pydata]` extra includes the full visualization stack used in these tutorials:
+The core install ships the HoloViz visualization stack — hvplot, holoviews, panel, and bokeh.
+The `[pydata]` extra adds the wider PyData ecosystem on top:
 
-> hvplot · plotly · altair · matplotlib · seaborn · holoviews · polars · duckdb · and more
+> matplotlib · plotly · seaborn · altair · polars · duckdb · datashader · geoviews · plotnine · pyarrow · scikit-learn · and more
 
 !!! tip "Only need the core server?"
     Install without extras if you only want to serve your own code and manage packages yourself:

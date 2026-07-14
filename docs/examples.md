@@ -6,12 +6,13 @@ Copy-paste snippets for the most common visualization types. All examples use th
 Use the `server` method (with `.servable()`) for multi-component dashboards; those examples
 are in the [Panel dashboard](#panel-dashboard) and [DataFrame table](#dataframe-table) sections below.
 
-!!! tip "Install the full PyData stack"
+!!! tip "Most of these work out of the box"
+    A default install includes the HoloViz stack (hvPlot, HoloViews, Panel, Bokeh), which
+    covers most examples below. For the wider PyData stack (Matplotlib, Plotly, seaborn,
+    Altair, polars, duckdb, datashader, geoviews, …) add the optional extra:
     ```bash
     pip install "panel-live-server[pydata]"
     ```
-    This installs hvplot, plotly, altair, matplotlib, seaborn, polars, and more alongside
-    Panel Live Server.
 
 ---
 

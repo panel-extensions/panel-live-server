@@ -22,8 +22,8 @@ pls serve, Panel Server (subprocess, port 5077)
 Browser, /view  /feed  /add  /admin
 ```
 
-**MCP Server** (`pls mcp`): Hosts the `list_packages`, `show`, and `screenshot`
-MCP tools. Starts the Panel server as a subprocess and manages its lifecycle.
+**MCP Server** (`pls mcp`): Hosts the `show` and `screenshot` MCP tools. Starts the
+Panel server as a subprocess and manages its lifecycle.
 
 **Panel Server** (`pls serve`): Executes Python code and serves visualizations as web pages.
 Exposes a REST API and four browser-accessible pages.
@@ -34,20 +34,17 @@ Exposes a REST API and four browser-accessible pages.
 
 ## MCP Tools
 
-The MCP server exposes three tools to the AI assistant, meant to be used together in a
+The MCP server exposes two tools to the AI assistant, meant to be used together in a
 typical session.
 
-### `list_packages`: see what's available
-
-Lists the Python packages installed in the server environment. The environment is fixed,
-packages cannot be installed on the fly, so an AI assistant is expected to call this once at
-the start of a session to know what it can use before writing any code.
-
-```python
-list_packages()                                    # core packages (~30), name only
-list_packages(category="visualization")            # filter by category
-list_packages(query="panel", include_versions=True)  # filter by name, with versions
-```
+The environment is fixed — packages cannot be installed on the fly — so the MCP server's
+instructions steer the assistant to write visualizations with **HoloViz packages** (hvPlot,
+HoloViews, Panel) first, falling back only when HoloViz cannot do the job. The core install
+also ships **Bokeh** (HoloViz's default backend) and the **ECharts** / **deck.gl** Panel panes,
+which are always available with no extra package. (Other well-known libraries such as Matplotlib,
+Plotly, seaborn, or Altair live in the optional `[pydata]` extra and may be absent.) If an import is missing, `show`
+reports it and the assistant rewrites the code rather than assuming availability. (A human can
+still inspect the environment directly with the `pls list packages` CLI command.)
 
 ### `show`: validate, then render the visualization
 

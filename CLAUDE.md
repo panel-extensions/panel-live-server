@@ -66,7 +66,7 @@ pls mcp  (MCP server — FastMCP, stdio/http/sse)
 src/panel_live_server/
   app.py          Panel server entry point (registers pages + REST endpoints)
   cli.py          Typer CLI — pls serve / pls mcp / pls status / pls list
-  server.py       FastMCP server — show() and list_packages() tools
+  server.py       FastMCP server — show() and screenshot() tools
   config.py       Config dataclass, env var binding
   manager.py      Subprocess lifecycle (start/stop/restart/health-check)
   client.py       HTTP client for /api/snippet and /api/health
@@ -100,7 +100,7 @@ src/panel_live_server/
   - `method`: `"inline"` (last expression displayed) or `"server"` (explicit `.servable()`)
   - `zoom`: `25 | 50 | 75 | 100`
 - **`screenshot(code, name, description, method, width, height, full_page)`** — visual validation; renders in headless browser and returns a PNG to the LLM (not the user) so it can inspect layout/appearance before calling `show`
-- **`list_packages()`** — list installed Python packages with versions
+- The MCP server instructs the assistant to prefer HoloViz packages (hvPlot, HoloViews, Panel), falling back to other well-known libraries only when needed. There is **no** `list_packages` MCP tool (removed in issue #29); humans can still run the `pls list packages` CLI command.
 
 ## Documentation Structure (Diataxis)
 
