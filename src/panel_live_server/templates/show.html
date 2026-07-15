@@ -127,6 +127,12 @@
 
       .icon-btn:not(:disabled):hover { opacity: 1; }
 
+      .icon-btn.active {
+        background: rgba(120, 120, 120, 0.18);
+        border-color: rgba(120, 120, 120, 0.7);
+        opacity: 1;
+      }
+
       .icon-btn svg {
         width: 15px;
         height: 15px;
@@ -333,6 +339,48 @@
         background: #333;
         border-color: #333;
       }
+
+      /* Code view — swaps into the same slot the visualization occupies.
+         Canvas/CanvasText are opaque and follow the host's light/dark scheme;
+         a translucent background would let the white iframe bleed through. */
+      .code-panel {
+        display: none;
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        flex-direction: column;
+        border: 1px solid rgba(120, 120, 120, 0.4);
+        border-radius: 8px;
+        background: Canvas;
+        color: CanvasText;
+        overflow: hidden;
+      }
+
+      .code-panel.visible {
+        display: flex;
+      }
+
+      .code-panel-header {
+        display: flex;
+        justify-content: flex-end;
+        gap: 6px;
+        padding: 6px;
+        flex-shrink: 0;
+        border-bottom: 1px solid rgba(120, 120, 120, 0.18);
+      }
+
+      .code-panel-body {
+        flex: 1 1 auto;
+        margin: 0;
+        padding: 16px;
+        overflow: auto;
+        box-sizing: border-box;
+        font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+        font-size: 0.82rem;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
     </style>
   </head>
   <body>
@@ -348,6 +396,17 @@
         <div id="panel-placeholder" class="panel-placeholder">
           <p class="placeholder-sub"></p>
         </div>
+        <div id="code-panel" class="code-panel">
+          <div class="code-panel-header">
+            <button id="copy-code" class="icon-btn" type="button" title="Copy code" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button id="close-code" class="icon-btn" type="button" title="Close code view" aria-label="Close code view">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <pre id="code-panel-body" class="code-panel-body"></pre>
+        </div>
         <iframe id="view" src="about:blank" title="show preview"></iframe>
       </div>
       <div class="toolbar">
@@ -360,8 +419,8 @@
         <div class="toolbar-sep"></div>
         <p id="message" class="message">Awaiting tool result…</p>
         <div class="toolbar-sep"></div>
-        <button id="copy-code" class="icon-btn" type="button" title="Copy code" aria-label="Copy code" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <button id="view-code" class="icon-btn" type="button" title="View code" aria-label="View code" aria-expanded="false" aria-controls="code-panel" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         </button>
         <button id="share-url" class="icon-btn" type="button" title="Share URL — copy link" aria-label="Share URL — copy link" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -383,7 +442,11 @@
       const errorPanel = document.getElementById("error-panel");
       const errorBody = document.getElementById("error-body");
       const panelPlaceholder = document.getElementById("panel-placeholder");
+      const codePanel = document.getElementById("code-panel");
+      const codePanelBody = document.getElementById("code-panel-body");
+      const viewCodeButton = document.getElementById("view-code");
       const copyCodeButton = document.getElementById("copy-code");
+      const closeCodeButton = document.getElementById("close-code");
       const shareUrlButton  = document.getElementById("share-url");
       const openBrowserButton = document.getElementById("open-browser");
       const zoomButtons = [
@@ -514,6 +577,35 @@
         if (ok) flashCopied(copyCodeButton);
       });
 
+      // The live iframe is hidden with visibility (not display) while the code is
+      // up: display:none would collapse it to zero size and Bokeh would repaint
+      // the plot at the wrong dimensions when the user switches back.
+      function openCodeView() {
+        if (!currentCode) return;
+        codePanelBody.textContent = currentCode;
+        codePanel.classList.add("visible");
+        viewCodeButton.classList.add("active");
+        viewCodeButton.setAttribute("aria-expanded", "true");
+        iframe.style.visibility = "hidden";
+      }
+
+      function closeCodeView() {
+        codePanel.classList.remove("visible");
+        viewCodeButton.classList.remove("active");
+        viewCodeButton.setAttribute("aria-expanded", "false");
+        iframe.style.visibility = "";
+      }
+
+      viewCodeButton.addEventListener("click", () => {
+        if (codePanel.classList.contains("visible")) {
+          closeCodeView();
+        } else {
+          openCodeView();
+        }
+      });
+
+      closeCodeButton.addEventListener("click", closeCodeView);
+
       openBrowserButton.addEventListener("click", () => {
         if (!currentUrl) return;
         app.openLink({ url: currentUrl });
@@ -568,7 +660,7 @@
           }
 
           // Enable action buttons now that we have a result
-          copyCodeButton.disabled = !currentCode;
+          viewCodeButton.disabled = !currentCode;
           shareUrlButton.disabled = !currentUrl;
           openBrowserButton.disabled = !currentUrl;
 
@@ -600,6 +692,7 @@
         // Reset all panels
         errorPanel.classList.remove("visible");
         panelPlaceholder.classList.remove("visible");
+        closeCodeView();
         iframeWrapper.classList.remove("compact");
         layout.classList.remove("compact");
         zoomButtons.forEach(({ btn }) => btn.style.display = "");
