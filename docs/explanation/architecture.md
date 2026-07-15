@@ -37,14 +37,23 @@ Exposes a REST API and four browser-accessible pages.
 The MCP server exposes two tools to the AI assistant, meant to be used together in a
 typical session.
 
-The environment is fixed — packages cannot be installed on the fly — so the MCP server's
-instructions steer the assistant to write visualizations with **HoloViz packages** (hvPlot,
-HoloViews, Panel) first, falling back only when HoloViz cannot do the job. The core install
-also ships **Bokeh** (HoloViz's default backend) and the **ECharts** / **deck.gl** Panel panes,
-which are always available with no extra package. (Other well-known libraries such as Matplotlib,
-Plotly, seaborn, or Altair live in the optional `[pydata]` extra and may be absent.) If an import is missing, `show`
-reports it and the assistant rewrites the code rather than assuming availability. (A human can
-still inspect the environment directly with the `pls list packages` CLI command.)
+The **assistant** cannot install packages. It writes code against whatever is already in the
+server environment, so the MCP server's instructions steer it toward **HoloViz packages**
+(hvPlot, HoloViews, Panel) first, falling back only when HoloViz cannot do the job. The core
+install also ships **Bokeh** (HoloViz's default backend) and the **ECharts** / **deck.gl** Panel
+panes, which are always available with no extra package. (Other well-known libraries such as
+Matplotlib, Plotly, seaborn, or Altair live in the optional `[pydata]` extra and may be absent.)
+If an import is missing, `show` reports it and the assistant rewrites the code rather than
+assuming availability.
+
+**You** decide what is in that environment. `pls` runs in whichever environment you installed it
+into and simply inherits whatever is there, so both the available packages *and their versions*
+are determined by that environment rather than by Panel Live Server. You can add or upgrade
+anything you like in it, using `pixi add --pypi <pkg>`, `uv tool install --with <pkg>`,
+`conda install <pkg>`, or whatever manages that environment, and the assistant can then use it.
+The `[pydata]` extra bundles a common set (Matplotlib, Plotly, seaborn, Altair, and more). See
+[Add packages to the server environment](../tutorials/installation.md#add-packages-to-the-server-environment)
+for the details, and run `pls list packages` to see what is installed and at which versions.
 
 ### `show`: validate, then render the visualization
 

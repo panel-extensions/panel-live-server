@@ -119,7 +119,7 @@ Each message creates a new visualization. Previous ones remain accessible at the
 
 ## Step 8: Check what packages are available
 
-The server environment is fixed, and the AI is instructed to prefer HoloViz packages (hvPlot,
+The AI cannot install packages itself, and is instructed to prefer HoloViz packages (hvPlot,
 HoloViews, Panel) and fall back to other well-known libraries only when needed — so you rarely
 have to think about this. To inspect the environment yourself, use the `pls list packages` CLI
 command in a terminal:
