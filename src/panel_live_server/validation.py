@@ -234,7 +234,7 @@ def check_packages(code: str) -> str | None:
     True
     >>> check_packages("import numpy") is None  # doctest: +SKIP
     True
-    >>> "list_packages" in (check_packages("import _totally_fake_pkg_xyz") or "")
+    >>> "HoloViz" in (check_packages("import _totally_fake_pkg_xyz") or "")
     True
     """
     try:
@@ -261,8 +261,8 @@ def check_packages(code: str) -> str | None:
                 f"Package '{package_name}' is not installed in this environment. "
                 f"Do NOT attempt to install packages or change the Python environment — "
                 f"the environment is fixed and cannot be modified. "
-                f"Call list_packages to see what IS available, "
-                f"then rewrite the code using an installed library."
+                f"Rewrite the code using a HoloViz package (hvPlot, HoloViews, Panel) "
+                f"or another well-known installed library."
             )
 
     return None

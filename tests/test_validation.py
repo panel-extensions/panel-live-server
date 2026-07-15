@@ -168,10 +168,12 @@ class TestCheckPackages:
         assert result is not None
         assert "_totally_fake_pkg_xyz_99" in result
 
-    def test_missing_package_mentions_list_packages(self):
+    def test_missing_package_suggests_rewrite(self):
         result = check_packages("import _totally_fake_pkg_xyz_99")
         assert result is not None
-        assert "list_packages" in result
+        # Points the model at HoloViz / well-known libraries instead of a
+        # removed list_packages tool (issue #29).
+        assert "HoloViz" in result
 
     def test_mapping_sklearn_to_scikit_learn(self):
         """import sklearn → error should mention scikit-learn, not sklearn."""

@@ -25,83 +25,13 @@ async def test_list_tools():
         tools = await client.list_tools()
         tool_names = {t.name for t in tools}
         assert "show" in tool_names
-        assert "list_packages" in tool_names
+        assert "screenshot" in tool_names
+        # list_packages was removed as an MCP tool (issue #29); the `pls list
+        # packages` CLI command remains for humans.
+        assert "list_packages" not in tool_names
         assert "validate" not in tool_names
         assert "render" not in tool_names
         assert "show_pyodide" not in tool_names
-
-
-@pytest.mark.asyncio
-async def test_packages_tool_returns_list():
-    """Test packages tool returns a non-empty sorted list of core package names."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("list_packages", {})
-        pkgs = json.loads(result.content[0].text)
-        assert isinstance(pkgs, list)
-        assert len(pkgs) > 0
-        assert all(isinstance(p, str) for p in pkgs)
-        # panel must be installed
-        names = [p.lower() for p in pkgs]
-        assert any("panel" in n for n in names)
-        # sorted by name (case-insensitive, hyphens == underscores)
-        assert names == sorted(names, key=lambda n: n.replace("-", "_"))
-        # default is 'core' — should be a small subset, not all 170+ packages
-        assert len(pkgs) < 50
-
-
-@pytest.mark.asyncio
-async def test_packages_tool_category_visualization():
-    """Test list_packages with category='visualization' returns only viz packages."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("list_packages", {"category": "visualization"})
-        pkgs = json.loads(result.content[0].text)
-        assert isinstance(pkgs, list)
-        assert len(pkgs) > 0
-        # Should contain well-known viz packages that are installed
-        names = {p.lower() for p in pkgs}
-        assert "bokeh" in names or "matplotlib" in names or "panel" in names
-        # Should NOT contain non-viz packages
-        assert len(pkgs) < 50  # much smaller than the full 200+ list
-
-
-@pytest.mark.asyncio
-async def test_packages_tool_category_multiple():
-    """Test list_packages with comma-separated categories."""
-    client = Client(mcp)
-    async with client:
-        viz_result = await client.call_tool("list_packages", {"category": "visualization"})
-        data_result = await client.call_tool("list_packages", {"category": "data"})
-        both_result = await client.call_tool("list_packages", {"category": "visualization,data"})
-        viz_pkgs = json.loads(viz_result.content[0].text)
-        data_pkgs = json.loads(data_result.content[0].text)
-        both_pkgs = json.loads(both_result.content[0].text)
-        # Combined should be >= each individual
-        assert len(both_pkgs) >= len(viz_pkgs)
-        assert len(both_pkgs) >= len(data_pkgs)
-
-
-@pytest.mark.asyncio
-async def test_packages_tool_query_filter():
-    """Test list_packages with query narrows results by name substring."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("list_packages", {"query": "panel"})
-        pkgs = json.loads(result.content[0].text)
-        assert len(pkgs) > 0
-        assert all("panel" in p.lower() for p in pkgs)
-
-
-@pytest.mark.asyncio
-async def test_packages_tool_category_and_query():
-    """Test list_packages with both category and query."""
-    client = Client(mcp)
-    async with client:
-        result = await client.call_tool("list_packages", {"category": "panel", "query": "material"})
-        pkgs = json.loads(result.content[0].text)
-        assert len(pkgs) >= 1
-        assert all("material" in p.lower() for p in pkgs)
 
 
 def test_packages_cli_lists_packages():

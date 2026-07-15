@@ -30,9 +30,8 @@ Ask your AI assistant:
 
 > List your available MCP tools.
 
-You should see three tools in the response:
+You should see two tools in the response:
 
-- `list_packages`: lists what is installed in the server environment
 - `show`: validates the code, renders the visualization, and returns a live URL
 - `screenshot`: takes a picture of an already-rendered visualization so the AI can answer
   questions about how it looks
@@ -120,13 +119,15 @@ Each message creates a new visualization. Previous ones remain accessible at the
 
 ## Step 8: Check what packages are available
 
-Ask your AI:
+The AI cannot install packages itself, and is instructed to prefer HoloViz packages (hvPlot,
+HoloViews, Panel) and fall back to other well-known libraries only when needed — so you rarely
+have to think about this. To inspect the environment yourself, use the `pls list packages` CLI
+command in a terminal:
 
-> List available packages. Use the list_packages tool.
-
-Or filter by name:
-
-> Is plotly available? Use list_packages.
+```bash
+pls list packages          # list everything installed
+pls list packages plotly   # filter by name
+```
 
 If a package you need is missing, see [Installation](installation.md#add-packages-to-the-server-environment)
 for how to add it with `--with`.
@@ -204,7 +205,7 @@ for the per-installer command.
 - Ask the AI to create visualizations using natural language
 - Ask a follow-up question about a visualization's appearance and have the AI check with `screenshot`
 - Iterate on visualizations through conversation
-- Check available packages with the `list_packages` tool
+- Check available packages with the `pls list packages` CLI command
 
 ## Next Steps
 

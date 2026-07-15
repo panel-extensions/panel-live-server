@@ -27,11 +27,10 @@ Use whichever fits how you work, or run both.
 ## MCP Server: AI assistant integration
 
 Give Claude, GitHub Copilot, Cursor, or any MCP-compatible AI assistant the ability to render
-visualizations directly in your IDE, and to actually see what it just rendered. Three tools are
+visualizations directly in your IDE, and to actually see what it just rendered. Two tools are
 exposed:
 
-- **`list_packages`**: lists what is installed in the server environment, so the AI knows what it can use before writing any code
-- **`show`**: validates the code (syntax, security, package availability, Panel extensions) and then executes it, returning a live, interactive visualization — no manual setup and no separate validation step required
+- **`show`**: validates the code (syntax, security, package availability, Panel extensions) and then executes it, returning a live, interactive visualization — no manual setup and no separate validation step required. The AI is instructed to reach for HoloViz packages (hvPlot, HoloViews, Panel) first, falling back to other well-known libraries only when needed
 - **`screenshot`**: captures a picture of an already-rendered visualization and hands it back to the AI, so it can answer follow-up questions about how the chart looks by inspecting the actual image instead of guessing from raw data
 
 <video controls autoplay muted loop style="width: 100%; max-width: 100%;">

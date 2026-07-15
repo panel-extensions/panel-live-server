@@ -132,9 +132,10 @@ terminal. By the end, `pls --version` will print the installed version.
     # typically: .\venv\Scripts\pls.exe
     ```
 
-The `[pydata]` extra includes the full visualization stack used in these tutorials:
+The core install ships the HoloViz visualization stack — hvplot, holoviews, panel, and bokeh.
+The `[pydata]` extra adds the wider PyData ecosystem on top:
 
-> hvplot · plotly · altair · matplotlib · seaborn · holoviews · polars · duckdb · and more
+> matplotlib · plotly · seaborn · altair · polars · duckdb · datashader · geoviews · plotnine · pyarrow · scikit-learn · and more
 
 !!! tip "Only need the core server?"
     Install without extras if you only want to serve your own code and manage packages yourself:
@@ -324,8 +325,9 @@ Once connected, ask your AI: *"Show me a scatter plot of this data using the sho
 
 ## Add packages to the server environment
 
-Because Panel Live Server runs in an isolated tool environment, it executes your Python snippets
-using the packages installed *in that environment*. To add a package:
+Panel Live Server executes your Python snippets using the packages installed *in the environment
+you installed it into*. It inherits that environment rather than defining its own, so you are free
+to add or upgrade anything you need there. To add a package:
 
 === "pixi"
 
@@ -361,6 +363,48 @@ using the packages installed *in that environment*. To add a package:
         To upgrade to the latest version:
         ```bash
         uv tool upgrade panel-live-server
+        ```
+
+=== "pip"
+
+    Activate the environment you installed `pls` into, then install as usual:
+
+    ```bash
+    pip install my-package
+    ```
+
+    For example, to add `prophet`:
+
+    ```bash
+    pip install prophet
+    ```
+
+    !!! note "Upgrading"
+        To upgrade to the latest version:
+        ```bash
+        pip install --upgrade panel-live-server
+        ```
+
+=== "conda"
+
+    Activate the environment you installed `pls` into, then install as usual:
+
+    ```bash
+    conda activate my-env
+    conda install my-package
+    ```
+
+    For example, to add `prophet`:
+
+    ```bash
+    conda activate my-env
+    conda install prophet
+    ```
+
+    !!! note "Upgrading"
+        To upgrade to the latest version:
+        ```bash
+        conda update panel-live-server
         ```
 
 No server restart is needed, the package is available immediately the next time the server starts.
