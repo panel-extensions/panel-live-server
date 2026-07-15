@@ -205,6 +205,37 @@ async def test_show_returns_retry_payload(code, method, layer, needle):
             assert needle in payload["error_message"]
 
 
+class TestBriefError:
+    """_brief_error() distils the strip text shown next to 'Render failed:' (issue #33)."""
+
+    def test_traceback_uses_exception_line(self):
+        tb = "Traceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    pn.panel(nope)\nNameError: name 'nope' is not defined"
+        assert server_module._brief_error(tb) == "NameError: name 'nope' is not defined"
+
+    def test_single_line_message_passes_through(self):
+        assert server_module._brief_error("Package 'prophet' is not installed.") == "Package 'prophet' is not installed."
+
+    def test_empty_returns_empty(self):
+        assert server_module._brief_error("") == ""
+        assert server_module._brief_error("   \n  ") == ""
+
+    def test_long_line_is_truncated(self):
+        brief = server_module._brief_error("E: " + "x" * 500)
+        assert len(brief) == server_module._BRIEF_ERROR_MAX_LEN
+        assert brief.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_show_retry_payload_message_carries_the_error():
+    """The retry strip names the failure rather than only saying 'Render failed' (issue #33)."""
+    server_module._validation_cache.clear()
+    async with Client(mcp) as client:
+        result = await client.call_tool("show", {"code": "import _totally_fake_pkg_xyz_abc", "method": "inline"})
+        payload = json.loads(result.content[0].text)
+        assert payload["message"].startswith("Render failed: ")
+        assert "Refining" not in payload["message"]
+
+
 @pytest.mark.asyncio
 async def test_show_recovers_when_client_uninitialized():
     """show self-heals when _client is None: lazily (re)starts the server and succeeds."""

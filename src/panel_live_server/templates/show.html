@@ -184,23 +184,79 @@
 
       .iframe-wrapper.compact {
         min-height: 0;
-        height: 34px;
+        height: auto;
       }
 
+      /* The strip now carries an expandable traceback, so the overlay joins the
+         normal flow (absolutely positioned it could never grow the wrapper) and
+         takes pointer events back so <summary> is clickable. */
       .iframe-wrapper.compact .loading-overlay {
+        position: static;
+        align-items: stretch;
         justify-content: flex-start;
-        padding-left: 12px;
-        gap: 10px;
+        padding: 0;
+        gap: 0;
         background: rgba(128, 128, 128, 0.06);
         border: 1px solid rgba(120, 120, 120, 0.18);
+        border-radius: 8px;
         opacity: 1;
         overflow: hidden;
+        pointer-events: auto;
       }
 
       /* Keep the text/glyph on top of the overlay background */
       .iframe-wrapper.compact .loading-overlay > * {
         position: relative;
         z-index: 1;
+      }
+
+      .retry-view {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .retry-line {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 32px;
+        padding: 0 12px;
+      }
+
+      .retry-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .retry-trace {
+        padding: 0 12px 8px;
+        font-size: 0.78rem;
+      }
+
+      .retry-trace summary {
+        cursor: pointer;
+        opacity: 0.75;
+        padding: 2px 0;
+        user-select: none;
+      }
+
+      .retry-trace summary:hover {
+        opacity: 1;
+      }
+
+      .retry-trace pre {
+        margin: 6px 0 0;
+        padding: 8px 10px;
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 0.75rem;
+        line-height: 1.45;
+        background: rgba(128, 128, 128, 0.08);
+        border: 1px solid rgba(120, 120, 120, 0.18);
+        border-radius: 6px;
       }
 
       /* Static mini bar-chart glyph — no animation, just a still resting mark */
@@ -492,6 +548,44 @@
         loadingOverlay.innerHTML = "";
       }
 
+      /* Build the quiet retry strip: the same one-line status as before plus,
+         when the server sent one, the error behind a collapsed <details>
+         (issue #33). The strip stays deliberately terse; the disclosure is the
+         only place the reason appears, so it is attached for any error, not
+         just multi-line tracebacks. Content is set via textContent because a
+         traceback embeds the user's own code and must never be parsed as HTML. */
+      function buildRetryView(payload) {
+        const view = document.createElement("div");
+        view.className = "retry-view";
+
+        const line = document.createElement("div");
+        line.className = "retry-line";
+
+        const bars = document.createElement("span");
+        bars.className = "refine-bars";
+        for (let i = 0; i < 4; i++) bars.appendChild(document.createElement("i"));
+        line.appendChild(bars);
+
+        const text = document.createElement("span");
+        text.className = "retry-text";
+        text.textContent = (payload && payload.message) || "Render failed";
+        line.appendChild(text);
+        view.appendChild(line);
+
+        const rawError = (payload && payload.error_message) || "";
+        if (rawError.trim()) {
+          const details = document.createElement("details");
+          details.className = "retry-trace";
+          const summary = document.createElement("summary");
+          summary.textContent = "Traceback";
+          const pre = document.createElement("pre");
+          pre.textContent = rawError;
+          details.append(summary, pre);
+          view.appendChild(details);
+        }
+        return view;
+      }
+
       function showBlockedFallback() {
         loadingOverlay.classList.remove("hidden");
         loadingOverlay.classList.add("blocked");
@@ -757,11 +851,7 @@
           loadTimer = null;
           loadingOverlay.classList.remove("hidden");
           loadingOverlay.classList.remove("blocked");
-          loadingOverlay.innerHTML =
-            '<span class="refine-bars"><i></i><i></i><i></i><i></i></span>' +
-            "<span>" +
-            ((parsedPayload && parsedPayload.message) || "Render failed · Refining...") +
-            "</span>";
+          loadingOverlay.replaceChildren(buildRetryView(parsedPayload));
         } else {
           hideSpinner();
           iframe.src = "about:blank";

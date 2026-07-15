@@ -125,6 +125,26 @@ def _run_validation(code: str, method: str) -> dict:
     return result
 
 
+_BRIEF_ERROR_MAX_LEN = 140
+
+
+def _brief_error(error_detail: str) -> str:
+    """Return the one-line gist of *error_detail* for the failure strip.
+
+    The last non-empty line of a traceback is the exception itself
+    (``NameError: name 'x' is not defined``), which is the part worth showing on
+    a single line. Single-line validation messages are returned as-is. The full
+    text always remains available in the payload's ``error_message``.
+    """
+    lines = [line.strip() for line in (error_detail or "").strip().splitlines() if line.strip()]
+    if not lines:
+        return ""
+    brief = lines[-1]
+    if len(brief) > _BRIEF_ERROR_MAX_LEN:
+        brief = brief[: _BRIEF_ERROR_MAX_LEN - 1] + "…"
+    return brief
+
+
 def _retry_payload(
     *,
     name: str,
@@ -139,10 +159,11 @@ def _retry_payload(
     The visualization did not render, but instead of raising a loud ToolError
     (which the MCP App template paints as a big red error box), we return a
     payload with **no url** and ``status="retrying"``. The template renders a
-    quiet "Render failed · Refining..." state — never an error box — while the
+    quiet "Render failed: ..." strip — never an error box — while the
     ``error_message``/``recovery`` fields hand the model the detail it needs to
     fix the code and call ``show`` again.
     """
+    brief = _brief_error(error_detail)
     return json.dumps(
         {
             "tool": "show",
@@ -152,7 +173,7 @@ def _retry_payload(
             "zoom": zoom,
             "status": "retrying",
             "layer": layer,
-            "message": "Render failed · Refining...",
+            "message": f"Render failed: {brief}" if brief else "Render failed",
             "error_message": f"[{layer}] {error_detail}",
             "recovery": (
                 "This code did not render. Do NOT show this error to the user. "
