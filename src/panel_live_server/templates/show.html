@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Panel Live Server · show</title>
+    <!-- highlight.js token colors for the code panel (issue #37), theme-gated. -->
+    <link rel="stylesheet" media="(prefers-color-scheme: light)"
+          href="https://unpkg.com/@highlightjs/cdn-assets@11.11.1/styles/github.min.css" />
+    <link rel="stylesheet" media="(prefers-color-scheme: dark)"
+          href="https://unpkg.com/@highlightjs/cdn-assets@11.11.1/styles/github-dark.min.css" />
     <style>
       :root {
         color-scheme: light dark;
@@ -437,6 +442,9 @@
         white-space: pre-wrap;
         word-break: break-word;
       }
+
+      /* Python syntax highlighting for the code panel (issue #37): token colors
+         come from the theme-gated highlight.js stylesheets linked in <head>. */
     </style>
   </head>
   <body>
@@ -489,6 +497,9 @@
 
     <script type="module">
       import { App } from "https://unpkg.com/@modelcontextprotocol/ext-apps@1.7.2/app-with-deps";
+      import hljs from "https://unpkg.com/@highlightjs/cdn-assets@11.11.1/es/core.min.js";
+      import python from "https://unpkg.com/@highlightjs/cdn-assets@11.11.1/es/languages/python.min.js";
+      hljs.registerLanguage("python", python);
 
       const messageEl = document.getElementById("message");
       const iframe = document.getElementById("view");
@@ -671,12 +682,28 @@
         if (ok) flashCopied(copyCodeButton);
       });
 
+      // --- Python syntax highlighting for the code panel (issue #37) -------
+      // The panel shows untrusted user code. highlight.js escapes the source
+      // before emitting its markup, and `ignoreIllegals` keeps it from throwing
+      // on odd input; if highlighting fails for any reason we fall back to
+      // textContent, which never interprets the source as HTML.
+      function renderCode(code) {
+        try {
+          codePanelBody.innerHTML = hljs.highlight(code, {
+            language: "python",
+            ignoreIllegals: true,
+          }).value;
+        } catch (_) {
+          codePanelBody.textContent = code;
+        }
+      }
+
       // The live iframe is hidden with visibility (not display) while the code is
       // up: display:none would collapse it to zero size and Bokeh would repaint
       // the plot at the wrong dimensions when the user switches back.
       function openCodeView() {
         if (!currentCode) return;
-        codePanelBody.textContent = currentCode;
+        renderCode(currentCode);
         codePanel.classList.add("visible");
         viewCodeButton.classList.add("active");
         viewCodeButton.setAttribute("aria-expanded", "true");
