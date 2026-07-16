@@ -524,8 +524,8 @@
         <iframe id="view" src="about:blank" title="show preview"></iframe>
       </div>
       <div id="resize-handle" class="resize-handle" role="separator" aria-orientation="horizontal"
-           aria-label="Drag to resize visualization, double-click to reset"
-           title="Drag to resize · double-click to reset"></div>
+           aria-label="Drag to resize visualization"
+           title="Drag to resize"></div>
       <div class="toolbar">
         <div class="zoom-group">
           <button id="zoom-25"  type="button">25%</button>
@@ -769,8 +769,7 @@
 
       // --- Drag-to-resize the visualization (issue #25) --------------------
       // A grip bar between the viz and the toolbar. Dragging sets an explicit
-      // pixel height on the wrapper (via the "resized" layout mode); double-
-      // clicking resets to the default viewport-filling height.
+      // pixel height on the wrapper (via the "resized" layout mode).
       const MIN_VIZ_HEIGHT = 240;
       const MAX_VIZ_HEIGHT = 4000;
       let dragState = null;
@@ -781,11 +780,6 @@
         const h = Math.max(MIN_VIZ_HEIGHT, Math.min(MAX_VIZ_HEIGHT, px));
         layout.classList.add("resized");
         iframeWrapper.style.height = h + "px";
-      }
-
-      function resetVizHeight() {
-        layout.classList.remove("resized");
-        iframeWrapper.style.height = "";
       }
 
       // pointermove fires many times per frame; resizing the iframe on each one
@@ -830,7 +824,6 @@
 
       resizeHandle.addEventListener("pointerup", endDrag);
       resizeHandle.addEventListener("pointercancel", endDrag);
-      resizeHandle.addEventListener("dblclick", resetVizHeight);
 
       const app = new App({ name: "panel-live-server-show", version: "0.1.0" });
 
