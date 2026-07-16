@@ -774,6 +774,8 @@
       const MIN_VIZ_HEIGHT = 240;
       const MAX_VIZ_HEIGHT = 4000;
       let dragState = null;
+      let pointerY = null;   // latest cursor Y, applied once per animation frame
+      let rafId = null;
 
       function setVizHeight(px) {
         const h = Math.max(MIN_VIZ_HEIGHT, Math.min(MAX_VIZ_HEIGHT, px));
@@ -784,6 +786,16 @@
       function resetVizHeight() {
         layout.classList.remove("resized");
         iframeWrapper.style.height = "";
+      }
+
+      // pointermove fires many times per frame; resizing the iframe on each one
+      // forces the embedded viz to reflow/repaint and lags behind the cursor
+      // (the "shaky" drag). Coalesce them: stash the latest Y and commit a single
+      // height write per animation frame.
+      function applyPointerY() {
+        rafId = null;
+        if (!dragState || pointerY === null) return;
+        setVizHeight(dragState.startHeight + (pointerY - dragState.startY));
       }
 
       resizeHandle.addEventListener("pointerdown", (e) => {
@@ -799,12 +811,18 @@
 
       resizeHandle.addEventListener("pointermove", (e) => {
         if (!dragState) return;
-        setVizHeight(dragState.startHeight + (e.clientY - dragState.startY));
+        pointerY = e.clientY;
+        if (rafId === null) rafId = requestAnimationFrame(applyPointerY);
       });
 
       function endDrag(e) {
         if (!dragState) return;
         dragState = null;
+        pointerY = null;
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
         resizeHandle.classList.remove("dragging");
         document.body.classList.remove("resizing");
         try { resizeHandle.releasePointerCapture(e.pointerId); } catch (_) {}
