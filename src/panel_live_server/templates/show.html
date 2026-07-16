@@ -18,7 +18,7 @@
 
       .layout {
         display: grid;
-        grid-template-rows: 1fr auto;   /* content first, controls in a footer below */
+        grid-template-rows: 1fr auto auto;   /* viz, resize grip, controls footer */
         min-height: 100vh;
         gap: 6px;
         padding: 8px 8px 6px;
@@ -169,6 +169,64 @@
         height: 100%;
         min-height: 500px;
         overflow: hidden;
+      }
+
+      /* Resizable viz (issue #25) — a grip bar between the visualization and the
+         toolbar lets the user drag the iframe taller/shorter. The grip lives in
+         its own grid row so it never overlaps the viz. Once dragged, the layout
+         switches from filling the viewport to honoring the explicit pixel height
+         set on the wrapper (the page then scrolls if it outgrows the host). */
+      .layout.resized {
+        grid-template-rows: auto auto auto;
+        min-height: 0;
+      }
+
+      .layout.resized .iframe-wrapper {
+        min-height: 0;
+      }
+
+      .resize-handle {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        height: 10px;
+        cursor: ns-resize;
+        touch-action: none;
+        flex-shrink: 0;
+      }
+
+      /* Shown only when a real visualization is on screen; hidden during retry. */
+      .layout.resizable .resize-handle {
+        display: flex;
+      }
+
+      .layout.compact .resize-handle {
+        display: none;
+      }
+
+      .resize-handle::before {
+        content: "";
+        width: 46px;
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(120, 120, 120, 0.4);
+        transition: background 0.15s;
+      }
+
+      .resize-handle:hover::before,
+      .resize-handle.dragging::before {
+        background: rgba(120, 120, 120, 0.8);
+      }
+
+      /* While dragging: suppress text selection and stop the iframe from
+         swallowing the pointer, so move events keep reaching the handle. */
+      body.resizing {
+        user-select: none;
+        cursor: ns-resize;
+      }
+
+      body.resizing iframe {
+        pointer-events: none;
       }
 
       /* Retry state: collapse the iframe area to a small strip (and drop the layout's 100vh floor) so a failed attempt reads as a quiet "working" line, not a big empty box. */
@@ -465,6 +523,9 @@
         </div>
         <iframe id="view" src="about:blank" title="show preview"></iframe>
       </div>
+      <div id="resize-handle" class="resize-handle" role="separator" aria-orientation="horizontal"
+           aria-label="Drag to resize visualization, double-click to reset"
+           title="Drag to resize · double-click to reset"></div>
       <div class="toolbar">
         <div class="zoom-group">
           <button id="zoom-25"  type="button">25%</button>
@@ -494,6 +555,7 @@
       const iframe = document.getElementById("view");
       const layout = document.querySelector(".layout");
       const iframeWrapper = document.querySelector(".iframe-wrapper");
+      const resizeHandle = document.getElementById("resize-handle");
       const loadingOverlay = document.getElementById("loading-overlay");
       const errorPanel = document.getElementById("error-panel");
       const errorBody = document.getElementById("error-body");
@@ -705,6 +767,53 @@
         app.openLink({ url: currentUrl });
       });
 
+      // --- Drag-to-resize the visualization (issue #25) --------------------
+      // A grip bar between the viz and the toolbar. Dragging sets an explicit
+      // pixel height on the wrapper (via the "resized" layout mode); double-
+      // clicking resets to the default viewport-filling height.
+      const MIN_VIZ_HEIGHT = 240;
+      const MAX_VIZ_HEIGHT = 4000;
+      let dragState = null;
+
+      function setVizHeight(px) {
+        const h = Math.max(MIN_VIZ_HEIGHT, Math.min(MAX_VIZ_HEIGHT, px));
+        layout.classList.add("resized");
+        iframeWrapper.style.height = h + "px";
+      }
+
+      function resetVizHeight() {
+        layout.classList.remove("resized");
+        iframeWrapper.style.height = "";
+      }
+
+      resizeHandle.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        dragState = {
+          startY: e.clientY,
+          startHeight: iframeWrapper.getBoundingClientRect().height,
+        };
+        resizeHandle.setPointerCapture(e.pointerId);
+        resizeHandle.classList.add("dragging");
+        document.body.classList.add("resizing");
+      });
+
+      resizeHandle.addEventListener("pointermove", (e) => {
+        if (!dragState) return;
+        setVizHeight(dragState.startHeight + (e.clientY - dragState.startY));
+      });
+
+      function endDrag(e) {
+        if (!dragState) return;
+        dragState = null;
+        resizeHandle.classList.remove("dragging");
+        document.body.classList.remove("resizing");
+        try { resizeHandle.releasePointerCapture(e.pointerId); } catch (_) {}
+      }
+
+      resizeHandle.addEventListener("pointerup", endDrag);
+      resizeHandle.addEventListener("pointercancel", endDrag);
+      resizeHandle.addEventListener("dblclick", resetVizHeight);
+
       const app = new App({ name: "panel-live-server-show", version: "0.1.0" });
 
       app.ontoolresult = ({ content }) => {
@@ -789,9 +898,14 @@
         closeCodeView();
         iframeWrapper.classList.remove("compact");
         layout.classList.remove("compact");
+        // Each new tool result starts fresh: drop any custom height and hide the
+        // grip until we confirm a real visualization is being shown below.
+        layout.classList.remove("resized", "resizable");
+        iframeWrapper.style.height = "";
         zoomButtons.forEach(({ btn }) => btn.style.display = "");
 
         if (currentEmbedHtmlGz) {
+          layout.classList.add("resizable");
           loadingOverlay.classList.remove("hidden");
           loadingOverlay.innerHTML =
             '<div class="spinner"></div><span>Decompressing visualization…</span>';
@@ -832,6 +946,7 @@
           }
           panelPlaceholder.classList.add("visible");
         } else if (currentUrl) {
+          layout.classList.add("resizable");
           iframe.style.display = "";
           loadingOverlay.classList.remove("hidden");
           loadingOverlay.innerHTML = '<div class="spinner"></div>';
