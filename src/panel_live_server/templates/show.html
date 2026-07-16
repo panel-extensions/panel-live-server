@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Panel Live Server · show</title>
+    <!-- highlight.js token colors for the code panel (issue #37), theme-gated. -->
+    <link rel="stylesheet" media="(prefers-color-scheme: light)"
+          href="https://unpkg.com/@highlightjs/cdn-assets@11.11.1/styles/github.min.css" />
+    <link rel="stylesheet" media="(prefers-color-scheme: dark)"
+          href="https://unpkg.com/@highlightjs/cdn-assets@11.11.1/styles/github-dark.min.css" />
     <style>
       :root {
         color-scheme: light dark;
@@ -438,25 +443,8 @@
         word-break: break-word;
       }
 
-      /* Python syntax highlighting for the code panel (issue #37). Colors follow
-         the One Light / One Dark palettes and switch with the host theme. The
-         highlighter escapes all source text before wrapping tokens, so these
-         spans only ever carry recognized keywords/strings/etc. */
-      .tok-kw      { color: #a626a4; }
-      .tok-str     { color: #50a14f; }
-      .tok-com     { color: #a0a1a7; font-style: italic; }
-      .tok-num     { color: #986801; }
-      .tok-builtin { color: #4078f2; }
-      .tok-dec     { color: #c18401; }
-
-      @media (prefers-color-scheme: dark) {
-        .tok-kw      { color: #c678dd; }
-        .tok-str     { color: #98c379; }
-        .tok-com     { color: #7f848e; }
-        .tok-num     { color: #d19a66; }
-        .tok-builtin { color: #61afef; }
-        .tok-dec     { color: #e5c07b; }
-      }
+      /* Python syntax highlighting for the code panel (issue #37): token colors
+         come from the theme-gated highlight.js stylesheets linked in <head>. */
     </style>
   </head>
   <body>
@@ -509,6 +497,9 @@
 
     <script type="module">
       import { App } from "https://unpkg.com/@modelcontextprotocol/ext-apps@1.7.2/app-with-deps";
+      import hljs from "https://unpkg.com/@highlightjs/cdn-assets@11.11.1/es/core.min.js";
+      import python from "https://unpkg.com/@highlightjs/cdn-assets@11.11.1/es/languages/python.min.js";
+      hljs.registerLanguage("python", python);
 
       const messageEl = document.getElementById("message");
       const iframe = document.getElementById("view");
@@ -692,61 +683,19 @@
       });
 
       // --- Python syntax highlighting for the code panel (issue #37) -------
-      // The panel shows untrusted user code, so escape every character first,
-      // then wrap only recognized tokens. Nothing from the source reaches the
-      // DOM unescaped: token text is escaped before it goes into a span, and
-      // keyword/builtin matches are bare identifiers with no HTML metacharacters.
-      const PY_KEYWORDS = new Set([
-        "False", "None", "True", "and", "as", "assert", "async", "await",
-        "break", "class", "continue", "def", "del", "elif", "else", "except",
-        "finally", "for", "from", "global", "if", "import", "in", "is",
-        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
-        "while", "with", "yield", "match", "case",
-      ]);
-      const PY_BUILTINS = new Set([
-        "abs", "all", "any", "bool", "bytes", "dict", "enumerate", "filter",
-        "float", "format", "frozenset", "getattr", "hasattr", "int", "isinstance",
-        "len", "list", "map", "max", "min", "next", "object", "open", "print",
-        "range", "repr", "reversed", "round", "set", "setattr", "sorted", "str",
-        "sum", "super", "tuple", "type", "zip",
-      ]);
-
-      function escapeHtml(s) {
-        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      }
-
-      // One master regex, matched in priority order: comments, triple-quoted
-      // strings, single/double strings (with optional r/b/f prefixes),
-      // decorators, numbers, then identifiers.
-      const PY_TOKEN_RE = /(#[^\n]*)|([rbfu]{0,2}"""[\s\S]*?"""|[rbfu]{0,2}'''[\s\S]*?''')|([rbfu]{0,2}"(?:\\.|[^"\\\n])*"|[rbfu]{0,2}'(?:\\.|[^'\\\n])*')|(@[A-Za-z_][\w.]*)|(0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|\b\d[\d_]*\.?\d*(?:[eE][+-]?\d+)?j?\b)|(\b[A-Za-z_]\w*\b)/g;
-
-      function highlightPython(code) {
-        let out = "";
-        let last = 0;
-        let m;
-        PY_TOKEN_RE.lastIndex = 0;
-        while ((m = PY_TOKEN_RE.exec(code)) !== null) {
-          out += escapeHtml(code.slice(last, m.index));
-          const [full, comment, tstr, str, dec, num, ident] = m;
-          if (comment !== undefined) {
-            out += `<span class="tok-com">${escapeHtml(full)}</span>`;
-          } else if (tstr !== undefined || str !== undefined) {
-            out += `<span class="tok-str">${escapeHtml(full)}</span>`;
-          } else if (dec !== undefined) {
-            out += `<span class="tok-dec">${escapeHtml(full)}</span>`;
-          } else if (num !== undefined) {
-            out += `<span class="tok-num">${escapeHtml(full)}</span>`;
-          } else if (PY_KEYWORDS.has(full)) {
-            out += `<span class="tok-kw">${full}</span>`;
-          } else if (PY_BUILTINS.has(full)) {
-            out += `<span class="tok-builtin">${full}</span>`;
-          } else {
-            out += escapeHtml(full);
-          }
-          last = PY_TOKEN_RE.lastIndex;
+      // The panel shows untrusted user code. highlight.js escapes the source
+      // before emitting its markup, and `ignoreIllegals` keeps it from throwing
+      // on odd input; if highlighting fails for any reason we fall back to
+      // textContent, which never interprets the source as HTML.
+      function renderCode(code) {
+        try {
+          codePanelBody.innerHTML = hljs.highlight(code, {
+            language: "python",
+            ignoreIllegals: true,
+          }).value;
+        } catch (_) {
+          codePanelBody.textContent = code;
         }
-        out += escapeHtml(code.slice(last));
-        return out;
       }
 
       // The live iframe is hidden with visibility (not display) while the code is
@@ -754,7 +703,7 @@
       // the plot at the wrong dimensions when the user switches back.
       function openCodeView() {
         if (!currentCode) return;
-        codePanelBody.innerHTML = highlightPython(currentCode);
+        renderCode(currentCode);
         codePanel.classList.add("visible");
         viewCodeButton.classList.add("active");
         viewCodeButton.setAttribute("aria-expanded", "true");
