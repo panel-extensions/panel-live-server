@@ -19,9 +19,7 @@ the full setup instructions for VS Code, Cursor, Claude Desktop, Claude Code, an
 
 !!! note
     When the MCP server starts, it automatically starts the Panel server in the background.
-    You do not need to run `pls serve` separately. A standalone `pls serve` launched from the
-    same environment resolves to the same per-environment port, so it shares that server rather
-    than colliding. Run `pls status` to see the address.
+    You do not need to run `pls serve` separately. A standalone `pls serve` launched from the same environment resolves to the same per-environment port, so it shares that server rather than colliding. Run `pls status` to see the address.
 
 ---
 
