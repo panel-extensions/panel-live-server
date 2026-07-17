@@ -119,28 +119,6 @@ For per-client setup instructions (VS Code, Cursor, Claude Desktop, Claude Code,
 }
 ```
 
-### Environment variables your snippets need
-
-Some libraries a snippet imports need credentials or settings at runtime. For example, Snowflake (`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`), a cloud SDK (`AWS_ACCESS_KEY_ID`), or any package that reads an API key or database URL from the environment. Snippets execute in the same process environment as the server, so set those in the same `"env"` block:
-
-```json
-{
-  "mcpServers": {
-    "panel-live-server": {
-      "command": "/path/to/pls",
-      "args": ["mcp"],
-      "env": {
-        "SNOWFLAKE_ACCOUNT": "your_account",
-        "SNOWFLAKE_USER": "your_user",
-        "SNOWFLAKE_PASSWORD": "your_password"
-      }
-    }
-  }
-}
-```
-
-Variables you `export` in a terminal do **not** reach the server when your MCP client launches it: the client starts `pls mcp` with its own environment, so runtime credentials must go in the config's `"env"` block. Do not hardcode secrets in the snippet itself. The security check rejects literal passwords, and reading them from the environment keeps them out of your code.
-
 ---
 
 ## External URL and Remote Environments
