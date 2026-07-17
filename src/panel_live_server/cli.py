@@ -104,9 +104,10 @@ def serve(
     else:
         logging.basicConfig(level=logging.INFO)
 
-    if port is None:
-        from panel_live_server.config import default_panel_port
+    from panel_live_server.config import default_panel_port
+    from panel_live_server.config import reset_config
 
+    if port is None:
         port = default_panel_port()
 
     # Set env vars before config is loaded so get_config() picks them up
@@ -116,8 +117,6 @@ def serve(
         os.environ["PANEL_LIVE_SERVER_DB_PATH"] = db_path
 
     # Reset the cached config singleton so it re-reads the env vars we just set
-    from panel_live_server.config import reset_config
-
     reset_config()
 
     from panel_live_server.app import main as app_main
@@ -227,9 +226,9 @@ def status(
     """
     import requests
 
-    if port is None:
-        from panel_live_server.config import default_panel_port
+    from panel_live_server.config import default_panel_port
 
+    if port is None:
         port = default_panel_port()
 
     url = f"http://{host}:{port}/api/health"
