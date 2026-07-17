@@ -11,12 +11,12 @@ Python code snippets and renders interactive visualizations.
 
 ## Default Configuration
 
-Panel Live Server runs on `localhost:5077` with sensible defaults. No configuration file is
+Panel Live Server runs on `localhost` with sensible defaults. No configuration file is
 required for local use.
 
 | Setting | Default | Description |
 |---|---|---|
-| Port | `5077` | Panel server port |
+| Port | per-environment (base `5077`) | Panel server port, derived from the active interpreter unless `PANEL_LIVE_SERVER_PORT` is set. Each Python environment gets its own port so servers in different environments do not collide. |
 | Host | `localhost` | Server host address |
 | Database | `~/.panel-live-server/snippets/snippets.db` | SQLite database path |
 | Max restarts | `3` | Maximum automatic restarts on failure |

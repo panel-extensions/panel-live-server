@@ -53,13 +53,12 @@ def main_callback(
 
 @app.command()
 def serve(
-    port: int = typer.Option(
-        5077,
+    port: int | None = typer.Option(
+        None,
         "--port",
         "-p",
-        help="Port number to run the Panel server on.",
+        help="Port to run the Panel server on. Defaults to a per-environment port derived from the interpreter.",
         envvar="PANEL_LIVE_SERVER_PORT",
-        show_default=True,
     ),
     host: str = typer.Option(
         "localhost",
@@ -93,9 +92,10 @@ def serve(
     and visualizing the results. Visit http://<host>:<port>/feed to see
     visualizations as they are created.
 
-    Note: if you are also running `pls mcp`, both commands use the same Panel
-    server port (PANEL_LIVE_SERVER_PORT). Run only one at a time unless you
-    configure different ports.
+    Note: `pls serve` and `pls mcp` launched from the same environment resolve to
+    the same per-environment default port, so a browser opened here shows the
+    visualizations the MCP server renders. Set PANEL_LIVE_SERVER_PORT (or --port)
+    to override.
     """
     import os
 
@@ -104,6 +104,12 @@ def serve(
     else:
         logging.basicConfig(level=logging.INFO)
 
+    from panel_live_server.config import default_panel_port
+    from panel_live_server.config import reset_config
+
+    if port is None:
+        port = default_panel_port()
+
     # Set env vars before config is loaded so get_config() picks them up
     os.environ["PANEL_LIVE_SERVER_PORT"] = str(port)
     os.environ["PANEL_LIVE_SERVER_HOST"] = host
@@ -111,8 +117,6 @@ def serve(
         os.environ["PANEL_LIVE_SERVER_DB_PATH"] = db_path
 
     # Reset the cached config singleton so it re-reads the env vars we just set
-    from panel_live_server.config import reset_config
-
     reset_config()
 
     from panel_live_server.app import main as app_main
@@ -173,8 +177,9 @@ def mcp(
 
     The MCP server exposes the `show` tool for executing and displaying
     Python visualizations. A Panel visualization server starts automatically
-    on port 5077 (PANEL_LIVE_SERVER_PORT) — visit that address in a browser
-    to watch visualizations appear in real time.
+    on a per-environment port (override with PANEL_LIVE_SERVER_PORT) — run
+    `pls status` to see the address, then visit its /feed in a browser to
+    watch visualizations appear in real time.
 
     Note: the --port flag here controls the MCP HTTP/SSE listener, NOT the
     Panel visualization server port. For stdio transport, --port is unused.
@@ -199,13 +204,12 @@ def mcp(
 
 @app.command()
 def status(
-    port: int = typer.Option(
-        5077,
+    port: int | None = typer.Option(
+        None,
         "--port",
         "-p",
-        help="Port to check.",
+        help="Port to check. Defaults to the per-environment port derived from the interpreter.",
         envvar="PANEL_LIVE_SERVER_PORT",
-        show_default=True,
     ),
     host: str = typer.Option(
         "localhost",
@@ -221,6 +225,11 @@ def status(
     Queries the health endpoint and reports the server status.
     """
     import requests
+
+    from panel_live_server.config import default_panel_port
+
+    if port is None:
+        port = default_panel_port()
 
     url = f"http://{host}:{port}/api/health"
     try:
