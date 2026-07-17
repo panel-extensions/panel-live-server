@@ -126,8 +126,13 @@ def test_build_subprocess_env_prepends_environment_paths(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _health_response(prefix):
+    """Build a fake healthy /api/health response carrying an interpreter prefix."""
+    return SimpleNamespace(status_code=200, json=lambda: {"status": "healthy", "prefix": prefix})
+
+
 def test_try_recover_adopts_healthy_unowned_server(monkeypatch, tmp_path):
-    """A healthy server already on the port that we don't own is adopted, not killed.
+    """A healthy same-environment server we don't own is adopted, not killed.
 
     Multiple MCP instances (e.g. the desktop UI client and the Cowork agent client)
     share one Panel server: only one can bind the port, so every other instance must
@@ -136,13 +141,31 @@ def test_try_recover_adopts_healthy_unowned_server(monkeypatch, tmp_path):
     manager = PanelServerManager(db_path=tmp_path / "snippets.db", port=5090, host="127.0.0.1")
     assert manager.process is None  # we did not start this server
 
-    monkeypatch.setattr(manager_module.requests, "get", lambda *a, **kw: SimpleNamespace(status_code=200))
+    monkeypatch.setattr(manager_module.requests, "get", lambda *a, **kw: _health_response(sys.prefix))
 
     killed = []
     monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
 
     assert manager._try_recover_stale_server() is True
     assert killed == []  # adopted, not killed
+
+
+def test_try_recover_refuses_different_environment_server(monkeypatch, tmp_path):
+    """A healthy server from a *different* interpreter must not be adopted.
+
+    Adopting it would execute snippets against that environment's installed
+    packages instead of the ones alongside this ``pls`` (issue #41).
+    """
+    manager = PanelServerManager(db_path=tmp_path / "snippets.db", port=5090, host="127.0.0.1")
+    assert manager.process is None
+
+    monkeypatch.setattr(manager_module.requests, "get", lambda *a, **kw: _health_response("/some/other/env"))
+
+    killed = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    assert manager._try_recover_stale_server() is False
+    assert killed == []  # not our env, but not force-killed either
 
 
 def test_try_recover_adopts_owned_running_server(monkeypatch, tmp_path):

@@ -135,13 +135,22 @@ class PanelServerManager:
                 if self.process is not None and self.process.poll() is None:
                     # We own this process — it is still running from this session.
                     logger.info(f"Found healthy Panel server already running on port {self.port}")
-                else:
-                    # Healthy but unowned — another MCP instance (or a previous
-                    # session) already started it. Adopt and share it rather than
-                    # killing it, so this instance gets a working client instead
-                    # of colliding on the port and ending up with _client = None.
+                    return True
+                # Healthy but unowned: adopt only if it runs in our own environment (a missing/unparsable prefix falls back to adopting any healthy server).
+                try:
+                    other_prefix = response.json().get("prefix")
+                except ValueError:
+                    other_prefix = None
+                if other_prefix in (None, sys.prefix):
                     logger.info(f"Adopting healthy Panel server already running on port {self.port} (owned by another instance).")
-                return True
+                    return True
+                logger.error(
+                    f"Port {self.port} is held by a Panel server from a different Python "
+                    f"environment ({other_prefix}); this one runs in {sys.prefix}. "
+                    f"Snippets would execute against the wrong packages, so it will not be "
+                    f"adopted. Set PANEL_LIVE_SERVER_PORT to a free port, or stop that server."
+                )
+                return False
         except requests.RequestException:
             pass
 

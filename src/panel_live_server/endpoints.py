@@ -299,12 +299,19 @@ class HealthEndpoint(RequestHandler):
     """Tornado RequestHandler for /api/health endpoint."""
 
     def get(self):
-        """Handle GET requests to check server health."""
+        """Handle GET requests to check server health.
+
+        The payload reports the interpreter running this server (``sys.prefix``
+        and ``sys.executable``) so a manager can tell whether a server already
+        listening on the port belongs to its own environment before adopting it.
+        """
         self.set_status(200)
         self.set_header("Content-Type", "application/json")
         self.write(
             {
                 "status": "healthy",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "prefix": sys.prefix,
+                "executable": sys.executable,
             }
         )

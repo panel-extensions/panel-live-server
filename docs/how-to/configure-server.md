@@ -11,12 +11,12 @@ Python code snippets and renders interactive visualizations.
 
 ## Default Configuration
 
-Panel Live Server runs on `localhost:5077` with sensible defaults. No configuration file is
+Panel Live Server runs on `localhost` with sensible defaults. No configuration file is
 required for local use.
 
 | Setting | Default | Description |
 |---|---|---|
-| Port | `5077` | Panel server port |
+| Port | per-environment (base `5077`) | Panel server port, derived from the active interpreter unless `PANEL_LIVE_SERVER_PORT` is set. Each Python environment gets its own port so servers in different environments do not collide. |
 | Host | `localhost` | Server host address |
 | Database | `~/.panel-live-server/snippets/snippets.db` | SQLite database path |
 | Max restarts | `3` | Maximum automatic restarts on failure |
@@ -118,6 +118,28 @@ For per-client setup instructions (VS Code, Cursor, Claude Desktop, Claude Code,
   }
 }
 ```
+
+### Environment variables your snippets need
+
+Some libraries a snippet imports need credentials or settings at runtime. For example, Snowflake (`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`), a cloud SDK (`AWS_ACCESS_KEY_ID`), or any package that reads an API key or database URL from the environment. Snippets execute in the same process environment as the server, so set those in the same `"env"` block:
+
+```json
+{
+  "mcpServers": {
+    "panel-live-server": {
+      "command": "/path/to/pls",
+      "args": ["mcp"],
+      "env": {
+        "SNOWFLAKE_ACCOUNT": "your_account",
+        "SNOWFLAKE_USER": "your_user",
+        "SNOWFLAKE_PASSWORD": "your_password"
+      }
+    }
+  }
+}
+```
+
+Variables you `export` in a terminal do **not** reach the server when your MCP client launches it: the client starts `pls mcp` with its own environment, so runtime credentials must go in the config's `"env"` block. Do not hardcode secrets in the snippet itself. The security check rejects literal passwords, and reading them from the environment keeps them out of your code.
 
 ---
 

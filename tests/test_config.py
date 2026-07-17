@@ -5,7 +5,10 @@ from unittest.mock import patch
 
 import pytest
 
+from panel_live_server.config import _PORT_BASE
+from panel_live_server.config import _PORT_SPAN
 from panel_live_server.config import _resolve_external_url
+from panel_live_server.config import default_panel_port
 from panel_live_server.config import get_config
 from panel_live_server.config import reset_config
 
@@ -154,3 +157,26 @@ class TestGetConfigExternalUrl:
         with patch.dict(os.environ, env, clear=False):
             config = get_config()
             assert config.external_url == ""
+
+
+class TestDefaultPanelPort:
+    """Tests for the per-environment default port derivation."""
+
+    def test_explicit_env_var_wins(self) -> None:
+        """An explicit PANEL_LIVE_SERVER_PORT is honored verbatim."""
+        with patch.dict(os.environ, {"PANEL_LIVE_SERVER_PORT": "6123"}, clear=False):
+            assert default_panel_port() == 6123
+
+    def test_derived_when_unset(self, monkeypatch) -> None:
+        """Without the env var the port is derived from sys.prefix, in range."""
+        monkeypatch.delenv("PANEL_LIVE_SERVER_PORT", raising=False)
+        port = default_panel_port()
+        assert _PORT_BASE <= port < _PORT_BASE + _PORT_SPAN
+
+    def test_derived_is_deterministic_per_prefix(self, monkeypatch) -> None:
+        """The derived port is stable for a given interpreter prefix."""
+        monkeypatch.delenv("PANEL_LIVE_SERVER_PORT", raising=False)
+        monkeypatch.setattr("panel_live_server.config.sys.prefix", "/envs/env-a")
+        first = default_panel_port()
+        assert default_panel_port() == first
+        assert _PORT_BASE <= first < _PORT_BASE + _PORT_SPAN

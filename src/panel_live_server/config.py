@@ -1,7 +1,9 @@
 """Configuration for Panel Live Server."""
 
+import hashlib
 import logging
 import os
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -9,9 +11,37 @@ from pydantic import Field
 
 logger = logging.getLogger("panel_live_server")
 
+# Base port and window for the per-environment default. The derived port lands
+# in [_PORT_BASE, _PORT_BASE + _PORT_SPAN), keeping it near the historical 5077
+# default while giving each Python environment its own deterministic port.
+_PORT_BASE = 5077
+_PORT_SPAN = 1000
+
 
 def _default_user_dir() -> Path:
     return Path(os.getenv("PANEL_LIVE_SERVER_USER_DIR", "~/.panel-live-server")).expanduser()
+
+
+def default_panel_port() -> int:
+    """Return the Panel server port for the active Python environment.
+
+    An explicit ``PANEL_LIVE_SERVER_PORT`` always wins. Otherwise the port is
+    derived deterministically from the interpreter (``sys.prefix``) so that each
+    environment gets its own server.
+
+    This is what keeps ``pls`` executing snippets against the packages the user
+    expects: the Panel server subprocess runs in the same interpreter as ``pls``
+    itself, but a single fixed port would let an MCP client launched from one
+    environment silently adopt a server already running in another. That server
+    executes code against *its* installed packages, so an import the user just
+    installed alongside ``pls`` shows up as missing. A per-environment port means
+    different environments no longer collide on one server.
+    """
+    explicit = os.getenv("PANEL_LIVE_SERVER_PORT")
+    if explicit:
+        return int(explicit)
+    digest = hashlib.sha256(sys.prefix.encode("utf-8")).digest()
+    return _PORT_BASE + int.from_bytes(digest[:2], "big") % _PORT_SPAN
 
 
 def _resolve_external_url(port: int) -> str:
@@ -73,7 +103,7 @@ def get_config() -> Config:
     """Get or create the config instance."""
     global _config
     if _config is None:
-        port = int(os.getenv("PANEL_LIVE_SERVER_PORT", "5077"))
+        port = default_panel_port()
         _config = Config(
             port=port,
             host=os.getenv("PANEL_LIVE_SERVER_HOST", "localhost"),
