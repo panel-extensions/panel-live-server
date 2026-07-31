@@ -32,8 +32,9 @@ Ask your AI assistant:
 You should see two tools in the response:
 
 - `show`: validates the code, renders the visualization, and returns a live URL
-- `screenshot`: takes a picture of an already-rendered visualization so the AI can answer
-  questions about how it looks
+- `screenshot`: takes a picture of a visualization for the AI to look at — either a draft it
+  has not shown you yet, so it can check its own work first, or one you already have, so it can
+  answer questions about how it looks
 
 ---
 

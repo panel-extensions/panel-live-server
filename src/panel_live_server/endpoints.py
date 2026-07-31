@@ -110,7 +110,7 @@ def _local_host(host: str) -> str:
 
 
 class ScreenshotEndpoint(RequestHandler):
-    """Render a snippet's ``/view`` page to a PNG via GET /api/screenshot?id=...
+    """Render a snippet's ``/view`` page to a PNG.
 
     Loads the live ``/view`` page in a headless browser (Playwright) and returns
     a PNG, giving LLMs a picture of the *rendered* output — layout, fonts, and
@@ -118,55 +118,113 @@ class ScreenshotEndpoint(RequestHandler):
     this returns HTTP 503 with an install hint so the caller can surface a clear
     message instead of failing opaquely.
 
-    Query parameters
-    ----------------
+    ``GET /api/screenshot?id=...`` captures a snippet that already exists.
+
+    ``POST /api/screenshot`` with a JSON body of ``{"code": ..., "name": ...,
+    "description": ..., "method": ...}`` captures code that has never been shown
+    (issue #43). The snippet is stored only for as long as the browser needs a
+    page to load and is deleted afterwards, so an agent can review a draft
+    without it reaching the user's feed.
+
+    Query parameters (GET) / body fields (POST)
+    -------------------------------------------
     id : str
-        Snippet id to render (required).
+        Snippet id to render (GET only, required).
     width, height : int
         Viewport size in px (default from config).
     full_page : bool
         Capture the full scrollable page rather than just the viewport.
     """
 
+    def _error(self, status: int, message: str, error: str | None = None) -> None:
+        """Write a JSON error response with *status*."""
+        self.set_status(status)
+        self.set_header("Content-Type", "application/json")
+        self.write({"error": error or message, "message": message})
+
     async def get(self):
         """Capture and return the snippet identified by ``?id=`` as a PNG."""
-        from panel_live_server.screenshot import PlaywrightUnavailableError
-        from panel_live_server.screenshot import capture_png
-
         snippet_id = self.get_argument("id", "")
         if not snippet_id:
-            self.set_status(400)
-            self.set_header("Content-Type", "application/json")
-            self.write({"error": "Missing 'id' parameter"})
+            self._error(400, "Missing 'id' parameter")
+            return
+
+        if not get_db().get_snippet(snippet_id):
+            self._error(404, f"Snippet {snippet_id} not found")
+            return
+
+        await self._capture(
+            snippet_id,
+            width=self.get_argument("width", ""),
+            height=self.get_argument("height", ""),
+            full_page=self.get_argument("full_page", "false"),
+        )
+
+    async def post(self):
+        """Store the posted code just long enough to capture it, then discard it."""
+        try:
+            body = json.loads(self.request.body.decode("utf-8"))
+        except ValueError:
+            self._error(400, "Request body must be JSON")
+            return
+
+        code = body.get("code", "")
+        if not code:
+            self._error(400, "Missing 'code' in request body")
             return
 
         db = get_db()
-        snippet = db.get_snippet(snippet_id)
-        if not snippet:
-            self.set_status(404)
-            self.set_header("Content-Type", "application/json")
-            self.write({"error": f"Snippet {snippet_id} not found"})
+        try:
+            snippet = db.create_visualization(
+                app=code,
+                name=body.get("name", ""),
+                description=body.get("description", ""),
+                method=body.get("method", "inline"),
+            )
+        except SecurityError as e:
+            self._error(400, str(e), error="SecurityError")
             return
+        except SyntaxError as e:
+            self._error(400, str(e), error="SyntaxError")
+            return
+        except Exception as e:
+            self._error(400, str(e), error=type(e).__name__)
+            return
+
+        try:
+            if snippet.error_message:
+                self._error(400, snippet.error_message, error="RuntimeError")
+                return
+            await self._capture(
+                snippet.id,
+                width=str(body.get("width", "")),
+                height=str(body.get("height", "")),
+                full_page=str(body.get("full_page", False)),
+            )
+        finally:
+            db.delete_snippet(snippet.id)
+
+    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str) -> None:
+        """Screenshot ``/view?id=<snippet_id>`` and write the PNG to the response."""
+        from panel_live_server.screenshot import PlaywrightUnavailableError
+        from panel_live_server.screenshot import capture_png
 
         config = get_config()
         try:
-            width = int(self.get_argument("width", str(config.screenshot_width)))
-            height = int(self.get_argument("height", str(config.screenshot_height)))
+            viewport_width = int(width or config.screenshot_width)
+            viewport_height = int(height or config.screenshot_height)
         except ValueError:
-            self.set_status(400)
-            self.set_header("Content-Type", "application/json")
-            self.write({"error": "width and height must be integers"})
+            self._error(400, "width and height must be integers")
             return
-        full_page = self.get_argument("full_page", "false").lower() in ("1", "true", "yes")
 
         view_url = f"http://{_local_host(config.host)}:{config.port}/view?id={snippet_id}"
 
         try:
             png = await capture_png(
                 view_url,
-                width=width,
-                height=height,
-                full_page=full_page,
+                width=viewport_width,
+                height=viewport_height,
+                full_page=full_page.lower() in ("1", "true", "yes"),
                 settle_ms=config.screenshot_settle_ms,
                 timeout_ms=config.screenshot_timeout_ms,
             )

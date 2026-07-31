@@ -31,7 +31,7 @@ visualizations directly in your IDE, and to actually see what it just rendered. 
 exposed:
 
 - **`show`**: validates the code (syntax, security, package availability, Panel extensions) and then executes it, returning a live, interactive visualization — no manual setup and no separate validation step required. The AI is instructed to reach for HoloViz packages (hvPlot, HoloViews, Panel) first, falling back to other well-known libraries only when needed
-- **`screenshot`**: captures a picture of an already-rendered visualization and hands it back to the AI, so it can answer follow-up questions about how the chart looks by inspecting the actual image instead of guessing from raw data
+- **`screenshot`**: renders a visualization and hands the picture back to the AI rather than to you. Point it at code the AI is still working on and it can check its own output privately, fixing and re-checking until it is right, so `show` only ever runs on the finished result. Point it at something already shown and it answers follow-up questions about how the chart looks by inspecting the actual image instead of guessing from raw data
 
 <video controls autoplay muted loop style="width: 100%; max-width: 100%;">
   <source src="assets/videos/panel-live-server-showcase-mcp.mp4" type="video/mp4">

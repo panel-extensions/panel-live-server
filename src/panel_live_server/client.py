@@ -11,6 +11,9 @@ import requests  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
+# Marks a screenshot failure caused by the missing headless browser rather than by the code.
+BROWSER_UNAVAILABLE_PREFIX = "PlaywrightUnavailable: "
+
 
 class DisplayClient:
     """HTTP client for Display Server REST API.
@@ -120,14 +123,54 @@ class DisplayClient:
         if height:
             params["height"] = height
 
+        return self._screenshot_request("GET", snippet_id, params=params)
+
+    def screenshot_code(
+        self,
+        code: str,
+        name: str = "",
+        description: str = "",
+        method: str = "inline",
+        width: int | None = None,
+        height: int | None = None,
+        full_page: bool = False,
+    ) -> tuple[bytes | None, str | None]:
+        """Render *code* and return a PNG of it without keeping the snippet.
+
+        Backs the draft path of the MCP ``screenshot`` tool (issue #43): the
+        server stores the code only long enough to load it in a browser, so an
+        agent can review a draft without it appearing in the user's feed.
+
+        Returns
+        -------
+        tuple[bytes | None, str | None]
+            ``(png_bytes, None)`` on success, or ``(None, error_message)`` on failure.
+        """
+        payload: dict[str, str | int | bool] = {
+            "code": code,
+            "name": name,
+            "description": description,
+            "method": method,
+            "full_page": full_page,
+        }
+        if width:
+            payload["width"] = width
+        if height:
+            payload["height"] = height
+
+        return self._screenshot_request("POST", "draft", json=payload)
+
+    def _screenshot_request(self, verb: str, label: str, **kwargs) -> tuple[bytes | None, str | None]:
+        """Call ``/api/screenshot`` and unpack the PNG-or-error response."""
         try:
-            response = self.session.get(
+            response = self.session.request(
+                verb,
                 f"{self.base_url}/api/screenshot",
-                params=params,
                 timeout=max(self.timeout, 60),
+                **kwargs,
             )
         except requests.RequestException as e:
-            logger.warning("Screenshot request error for snippet %s: %s", snippet_id, e)
+            logger.warning("Screenshot request error for %s: %s", label, e)
             return None, f"Screenshot request failed: {e}"
 
         if response.status_code == 200 and "image/png" in response.headers.get("Content-Type", ""):
@@ -136,9 +179,13 @@ class DisplayClient:
         try:
             body = response.json()
             message = body.get("message") or body.get("error") or response.text
+            # Tag the one failure a caller cannot fix by changing the code, so it
+            # can be reported rather than retried.
+            if body.get("error") == "PlaywrightUnavailable":
+                message = f"{BROWSER_UNAVAILABLE_PREFIX}{message}"
         except ValueError:
             message = response.text or f"HTTP {response.status_code}"
-        logger.warning("Screenshot failed (HTTP %s) for snippet %s: %s", response.status_code, snippet_id, message)
+        logger.warning("Screenshot failed (HTTP %s) for %s: %s", response.status_code, label, message)
         return None, message
 
     def close(self) -> None:

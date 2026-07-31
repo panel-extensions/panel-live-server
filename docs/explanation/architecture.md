@@ -98,18 +98,28 @@ The tool accepts:
 ### `screenshot`: see the result, don't guess
 
 `show` returns a live URL, but an AI assistant cannot open a browser to look at it. The
-`screenshot` tool closes that gap: it loads the rendered `/view` page for a given snippet in a
-headless browser and returns a PNG of it directly to the AI.
+`screenshot` tool closes that gap: it loads a rendered `/view` page in a headless browser and
+returns a PNG of it directly to the AI.
 
-This matters for follow-up questions about appearance: "where does it peak?", "which bar is
-tallest?", "what color is that slice?". Answering those from the raw data is often wrong,
-because the rendered plot is not the same as the data: heatmaps can flip row order, axes get
-inverted, categories get sorted, and histograms bin values. The screenshot is the only ground
-truth for what the chart actually looks like.
+It takes either a `snippet_id` or raw `code`:
 
 ```python
-screenshot(snippet_id="abc123", width=1200, height=800, full_page=False)
+screenshot(snippet_id="abc123", width=1200, height=800)  # something already shown
+screenshot(code="...", method="server")                                   # a draft nobody has seen
 ```
+
+**Reviewing a draft.** The `code` form renders the snippet, captures it, and deletes it again,
+so the draft never reaches the chat or the feed. That gives the AI a private loop — render,
+look, fix, look again — and `show` gets called once, at the end, on work that is actually
+finished. Without it the AI has to call `show` to obtain a `snippet_id`, which means every
+half-baked intermediate version is published to the user before the AI has even seen it.
+
+**Answering questions about appearance.** The `snippet_id` form handles follow-ups on something
+the user already has: "where does it peak?", "which bar is tallest?", "what color is that
+slice?". Answering those from the raw data is often wrong, because the rendered plot is not the
+same as the data: heatmaps can flip row order, axes get inverted, categories get sorted, and
+histograms bin values. The screenshot is the only ground truth for what the chart actually
+looks like.
 
 If the returned image is too blurry, too small, or clipped to answer confidently, the AI is
 instructed to fall back to reasoning from the code and data rather than guessing from a bad

@@ -305,3 +305,72 @@ async def test_link_only_clients_get_the_open_in_browser_flag(monkeypatch, clien
     assert payload.get("panel_server", False) is expects_button
     assert payload["url"]  # the button and the iframe both need a live URL
     assert "embed_html_gz" not in payload  # no embed is ever sent now
+
+
+# ---------------------------------------------------------------------------
+# screenshot(code=...) — reviewing a draft without showing it (issue #43)
+# ---------------------------------------------------------------------------
+
+
+class TestScreenshotDrafts:
+    """The model can look at its own work before the user sees it."""
+
+    @pytest.mark.asyncio
+    async def test_screenshot_advertises_the_code_parameter(self):
+        """A draft is only reachable if the tool schema actually offers `code`."""
+        async with Client(mcp) as client:
+            tool = next(t for t in await client.list_tools() if t.name == "screenshot")
+            properties = tool.inputSchema["properties"]
+            assert "code" in properties
+            # snippet_id must have stopped being mandatory, or a draft is unreachable.
+            assert "snippet_id" not in tool.inputSchema.get("required", [])
+
+    @pytest.mark.asyncio
+    async def test_screenshot_without_code_or_id_is_an_error(self):
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError, match="code="):
+                await client.call_tool("screenshot", {})
+
+    @pytest.mark.asyncio
+    async def test_invalid_draft_comes_back_as_a_fixable_message(self):
+        """A broken draft returns guidance, not an error box — the user saw nothing."""
+        server_module._validation_cache.clear()
+        async with Client(mcp) as client:
+            result = await client.call_tool("screenshot", {"code": "def bad syntax"})
+
+        assert all(block.type == "text" for block in result.content)
+        text = result.content[0].text
+        assert "Draft did not render" in text
+        assert "screenshot(code=...)" in text
+
+    @pytest.mark.asyncio
+    async def test_valid_draft_returns_an_image_and_never_creates_a_snippet(self):
+        """The draft path renders via screenshot_code, not via show/create_snippet."""
+        from unittest.mock import patch
+
+        server_module._validation_cache.clear()
+        async with Client(mcp) as client:
+            with (
+                patch.object(server_module._client, "screenshot_code", return_value=(b"\x89PNG", None)) as capture,
+                patch.object(server_module._client, "create_snippet") as create,
+            ):
+                result = await client.call_tool("screenshot", {"code": "1 + 1", "name": "Draft"})
+
+        assert capture.called
+        assert not create.called
+        assert result.content[0].type == "image"
+        assert "REVIEW THIS DRAFT" in result.content[1].text
+
+    @pytest.mark.asyncio
+    async def test_missing_browser_is_reported_not_retried(self):
+        """Rewriting the code cannot install Chromium, so this must not look fixable."""
+        from unittest.mock import patch
+
+        from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
+
+        server_module._validation_cache.clear()
+        failure = (None, f"{BROWSER_UNAVAILABLE_PREFIX}Chromium is not installed. Run: pls install-browser")
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=failure):
+                with pytest.raises(ToolError, match="pls install-browser"):
+                    await client.call_tool("screenshot", {"code": "1 + 1"})
