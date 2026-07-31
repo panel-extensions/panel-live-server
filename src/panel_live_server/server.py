@@ -318,7 +318,7 @@ async def app_lifespan(app):
         _cleanup()
 
 
-_CLAUDE_DESKTOP_INSTRUCTIONS = (
+_RENDERING_INSTRUCTIONS = (
     "RENDERING\n"
     "Visualizations are served by the live Panel server, so Panel reactive patterns "
     "(pn.bind, @pn.depends, param.watch, .servable()) work everywhere. "
@@ -354,7 +354,7 @@ mcp = FastMCP(
         "Other well-known libraries (Matplotlib, Plotly, seaborn, Altair) are installed ONLY\n"
         "when the optional 'pydata' dependencies are present, so they may be MISSING — prefer\n"
         "HoloViz. You do NOT need to check availability up front: if an import is not installed,\n"
-        "`show` returns the validation error — read it and rewrite using a HoloViz package.\n\n" + _CLAUDE_DESKTOP_INSTRUCTIONS + "OUTPUT\n"
+        "`show` returns the validation error — read it and rewrite using a HoloViz package.\n\n" + _RENDERING_INSTRUCTIONS + "OUTPUT\n"
         "After calling `show`, ALWAYS present the returned URL to the user as a "
         "clickable Markdown link: [Show Visualization](url)\n\n"
         "ERRORS\n"
