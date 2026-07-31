@@ -402,12 +402,36 @@ def get_relative_view_url(id: str) -> str:
     return f"./view?id={id}"
 
 
+def _isolated_curdoc():
+    """Pin this thread to a throwaway Bokeh document for the duration (issue #44).
+
+    Bokeh resolves ``curdoc()`` from process-global state, not thread-local
+    state, so a validation thread that asks for the current document while the
+    server happens to be rendering a ``/view`` session gets *that session's*
+    document back. ``.servable()`` then writes to it (``doc.title``, roots) from
+    a thread holding none of the session's locks, and Bokeh rejects the change
+    with "_pending_writes should be non-None when we have a document lock".
+
+    Panel checks its own ``state._curdoc`` ContextVar before falling back to
+    Bokeh's global, and a ContextVar set inside this thread is invisible to
+    every other thread. Setting it to a fresh document therefore stops the
+    fallback without disturbing a live session. The document has no
+    ``session_context``, which is the condition ``.servable()`` requires before
+    it writes anything, so it quietly becomes a no-op here.
+    """
+    from bokeh.document import Document
+    from panel.io.state import set_curdoc
+
+    return set_curdoc(Document())
+
+
 def _run_execution(code: str) -> str:
     """Execute *code* in an isolated module namespace. Returns error string or ``""``."""
     try:
         # Use a bokeh_app_ prefix so pn.state.served returns True during
         # validation, allowing ``if pn.state.served:`` blocks to be exercised.
-        execute_in_module(code, module_name="bokeh_app_validation", cleanup=True)
+        with _isolated_curdoc():
+            execute_in_module(code, module_name="bokeh_app_validation", cleanup=True)
         return ""
     except Exception as e:
         tb = e.__traceback__.tb_next if e.__traceback__ is not None else None

@@ -1,12 +1,18 @@
 """Tests for display utilities."""
 
+import concurrent.futures
 import os
 import sys
 
+import panel as pn
 import pytest
+from bokeh.document import Document
+from bokeh.io.doc import patch_curdoc
+from panel.io.state import state
 
 import panel_live_server.utils as utils_module
 from panel_live_server.utils import ExtensionError
+from panel_live_server.utils import _run_execution
 from panel_live_server.utils import execute_in_module
 from panel_live_server.utils import extract_last_expression
 from panel_live_server.utils import find_extensions
@@ -608,3 +614,39 @@ pn.widgets.Tabulator(df)
         error_msg = str(exc_info.value)
         assert "pn.extension('tabulator')" in error_msg
         assert "Required Panel extension(s) not loaded" in error_msg
+
+
+class TestValidationDocumentIsolation:
+    """Runtime validation must not reach into a live session's document (issue #44).
+
+    ``validate_code`` executes the snippet in a worker thread while the Panel
+    server may be rendering a ``/view`` session on the main thread. Bokeh
+    resolves ``curdoc()`` from process-global state rather than thread-local
+    state, so without isolation that worker sees the live session's document.
+    ``.servable()`` then writes to it (title, roots) from a thread holding none
+    of the session's locks, and Bokeh rejects the change with "_pending_writes
+    should be non-None when we have a document lock".
+    """
+
+    def test_validation_thread_does_not_see_the_live_session_document(self):
+        live = Document()
+        # Panel only hands back a document that looks served, which is exactly
+        # the case that makes .servable() write to it.
+        live._session_context = lambda: object()
+        pn.state.cache.pop("pls_seen_doc", None)
+
+        # patch_curdoc is how Bokeh publishes the rendering session's document.
+        # It is a process-global stack, so the worker thread below sees it too.
+        code = "import panel as pn\npn.state.cache['pls_seen_doc'] = pn.state.curdoc"
+        with patch_curdoc(live), concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            error = executor.submit(_run_execution, code).result(timeout=30)
+
+        assert error == ""
+        assert pn.state.cache["pls_seen_doc"] is not live
+
+    def test_isolation_does_not_leak_into_other_threads(self):
+        """The isolating ContextVar must stay inside the worker thread."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(_run_execution, "x = 1").result(timeout=30)
+
+        assert state._curdoc.get() is None
