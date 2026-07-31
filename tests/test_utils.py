@@ -1,12 +1,18 @@
 """Tests for display utilities."""
 
+import concurrent.futures
 import os
 import sys
 
+import panel as pn
 import pytest
+from bokeh.document import Document
+from bokeh.io.doc import patch_curdoc
+from panel.io.state import state
 
 import panel_live_server.utils as utils_module
 from panel_live_server.utils import ExtensionError
+from panel_live_server.utils import _run_execution
 from panel_live_server.utils import execute_in_module
 from panel_live_server.utils import extract_last_expression
 from panel_live_server.utils import find_extensions
@@ -623,14 +629,6 @@ class TestValidationDocumentIsolation:
     """
 
     def test_validation_thread_does_not_see_the_live_session_document(self):
-        import concurrent.futures
-
-        import panel as pn
-        from bokeh.document import Document
-        from bokeh.io.doc import patch_curdoc
-
-        from panel_live_server.utils import _run_execution
-
         live = Document()
         # Panel only hands back a document that looks served, which is exactly
         # the case that makes .servable() write to it.
@@ -648,12 +646,6 @@ class TestValidationDocumentIsolation:
 
     def test_isolation_does_not_leak_into_other_threads(self):
         """The isolating ContextVar must stay inside the worker thread."""
-        import concurrent.futures
-
-        from panel.io.state import state
-
-        from panel_live_server.utils import _run_execution
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             executor.submit(_run_execution, "x = 1").result(timeout=30)
 
