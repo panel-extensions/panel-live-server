@@ -176,6 +176,18 @@
         overflow: hidden;
       }
 
+      /* Token badge (issue #45) — result metadata, not data, so it sits in the footer beside the status message rather than over the visualization and the plot's own toolbar. */
+      .token-badge {
+        display: none;
+        flex-shrink: 0;
+        font-size: 0.8rem;
+        opacity: 0.6;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .token-badge.visible { display: block; }
+
       /* Resizable viz (issue #25) — a grip bar between the visualization and the
          toolbar lets the user drag the iframe taller/shorter. The grip lives in
          its own grid row so it never overlaps the viz. Once dragged, the layout
@@ -543,6 +555,7 @@
         </div>
         <div class="toolbar-sep"></div>
         <p id="message" class="message">Awaiting tool result…</p>
+        <span id="token-badge" class="token-badge" title="Estimated size of this tool result in the model's context"></span>
         <div class="toolbar-sep"></div>
         <button id="view-code" class="icon-btn" type="button" title="View code" aria-label="View code" aria-expanded="false" aria-controls="code-panel" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -568,6 +581,7 @@
       const iframeWrapper = document.querySelector(".iframe-wrapper");
       const resizeHandle = document.getElementById("resize-handle");
       const loadingOverlay = document.getElementById("loading-overlay");
+      const tokenBadge = document.getElementById("token-badge");
       const errorPanel = document.getElementById("error-panel");
       const errorBody = document.getElementById("error-body");
       const panelPlaceholder = document.getElementById("panel-placeholder");
@@ -619,6 +633,23 @@
         loadingOverlay.classList.add("hidden");
         loadingOverlay.classList.remove("blocked");
         loadingOverlay.innerHTML = "";
+      }
+
+      /* Token badge (issue #45): the payload is a message in the conversation, so its whole size is read as context. Payloads predating this field leave the badge hidden. */
+      function formatTokens(n) {
+        if (n < 1000) return String(n);
+        return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+      }
+
+      function renderTokenBadge(payload) {
+        const tokens = payload && payload.tokens;
+        if (typeof tokens !== "number") {
+          tokenBadge.classList.remove("visible");
+          tokenBadge.textContent = "";
+          return;
+        }
+        tokenBadge.textContent = `~${formatTokens(tokens)} tokens`;
+        tokenBadge.classList.add("visible");
       }
 
       /* Build the quiet retry strip: the same one-line status as before plus,
@@ -931,6 +962,7 @@
         const isPanelServer = parsedPayload && parsedPayload.panel_server === true;
 
         // Reset all panels
+        renderTokenBadge(parsedPayload);
         errorPanel.classList.remove("visible");
         panelPlaceholder.classList.remove("visible");
         closeCodeView();

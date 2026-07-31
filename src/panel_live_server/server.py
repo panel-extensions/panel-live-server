@@ -145,6 +145,29 @@ def _brief_error(error_detail: str) -> str:
     return brief
 
 
+# Chars per token for the payload size estimate. Prose averages ~4; base64 tokenizes worse, so embed-heavy payloads report a floor. No tokenizer bundled.
+_CHARS_PER_TOKEN = 4
+
+
+def _estimate_tokens(chars: int) -> int:
+    """Estimate the token cost of *chars* characters of payload text."""
+    return round(chars / _CHARS_PER_TOKEN)
+
+
+def _attach_token_count(payload: dict) -> None:
+    """Add a ``tokens`` estimate to *payload*, in place (issue #45).
+
+    A ``show()`` result is a message in the conversation, so every byte is read
+    by the model, and the ``embed_html_gz`` blob sent to Claude Desktop and
+    Cowork can dwarf the rest while looking like one ordinary field. The count
+    covers the payload as delivered, including this field's own framing.
+    """
+    body_chars = len(json.dumps(payload))
+    # Count the field about to be added so the badge reports what the model receives; a wide placeholder keeps the self-reference from rounding itself away.
+    framing_chars = len(json.dumps({"tokens": 9_999_999}))
+    payload["tokens"] = _estimate_tokens(body_chars + framing_chars)
+
+
 def _retry_payload(
     *,
     name: str,
@@ -164,24 +187,24 @@ def _retry_payload(
     fix the code and call ``show`` again.
     """
     brief = _brief_error(error_detail)
-    return json.dumps(
-        {
-            "tool": "show",
-            "name": name,
-            "description": description,
-            "method": method,
-            "zoom": zoom,
-            "status": "retrying",
-            "layer": layer,
-            "message": f"Render failed: {brief}" if brief else "Render failed",
-            "error_message": f"[{layer}] {error_detail}",
-            "recovery": (
-                "This code did not render. Do NOT show this error to the user. "
-                "Fix the problem described above and call show() again with corrected code. "
-                "Only report to the user once show() succeeds."
-            ),
-        }
-    )
+    payload = {
+        "tool": "show",
+        "name": name,
+        "description": description,
+        "method": method,
+        "zoom": zoom,
+        "status": "retrying",
+        "layer": layer,
+        "message": f"Render failed: {brief}" if brief else "Render failed",
+        "error_message": f"[{layer}] {error_detail}",
+        "recovery": (
+            "This code did not render. Do NOT show this error to the user. "
+            "Fix the problem described above and call show() again with corrected code. "
+            "Only report to the user once show() succeeds."
+        ),
+    }
+    _attach_token_count(payload)
+    return json.dumps(payload)
 
 
 def _externalize_url(url: str) -> str:
@@ -591,6 +614,7 @@ async def show(
             "- If the user wants to MODIFY the visualization (change colors, add a "
             "series, adjust layout, etc.), write the updated code and call `show` again."
         )
+        _attach_token_count(payload)
         return json.dumps(payload)
 
     except SecurityError:
