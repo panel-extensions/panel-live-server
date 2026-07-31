@@ -176,10 +176,7 @@
         overflow: hidden;
       }
 
-      /* Token badge (issue #45) — what this tool result cost the model. It sits
-         in the footer beside the status message, as result metadata rather than
-         anything about the data, so the visualization stays unobstructed and it
-         never collides with the plot's own toolbar. */
+      /* Token badge (issue #45) — result metadata, not data, so it sits in the footer beside the status message rather than over the visualization and the plot's own toolbar. */
       .token-badge {
         display: none;
         flex-shrink: 0;
@@ -638,11 +635,7 @@
         loadingOverlay.innerHTML = "";
       }
 
-      /* Token badge (issue #45): surface what this tool result cost the model.
-         The payload is a message in the conversation, so its whole size is read
-         as context, and the embed blob can dominate it while looking like one
-         ordinary field. Payloads from a server predating this field leave the
-         badge hidden rather than showing a zero. */
+      /* Token badge (issue #45): the payload is a message in the conversation, so its whole size is read as context. Payloads predating this field leave the badge hidden. */
       function formatTokens(n) {
         if (n < 1000) return String(n);
         return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
