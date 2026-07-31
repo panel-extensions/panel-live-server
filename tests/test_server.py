@@ -1,7 +1,5 @@
 """Tests for the Panel Live Server MCP server."""
 
-import base64
-import gzip
 import json
 
 import pytest
@@ -11,7 +9,6 @@ from typer.testing import CliRunner
 
 import panel_live_server.server as server_module
 from panel_live_server.cli import app
-from panel_live_server.server import _embed_fields
 from panel_live_server.server import mcp
 from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ValidationError
@@ -165,11 +162,11 @@ class TestTokenCount:
         # less than what the model actually receives.
         assert payload["tokens"] >= server_module._estimate_tokens(len(json.dumps(payload)))
 
-    def test_embed_dominates_the_count(self):
+    def test_count_scales_with_payload_size(self):
         small = {"tool": "show", "code": "x = 1"}
         server_module._attach_token_count(small)
 
-        large = {"tool": "show", "code": "x = 1", "embed_html_gz": "A" * 150_000}
+        large = {"tool": "show", "code": "x = 1\n" * 25_000}
         server_module._attach_token_count(large)
 
         assert large["tokens"] > 100 * small["tokens"]
@@ -276,73 +273,35 @@ async def test_show_single_call_succeeds():
 
 
 # ---------------------------------------------------------------------------
-# server._embed_fields — payload fields controlling how the client renders
+# Link-only clients — Claude Desktop and Cowork get the "Open in browser" button
 # ---------------------------------------------------------------------------
 
 
-def test_embed_fields_within_cap_round_trips():
-    """A small embed is gzip+base64 encoded under 'embed_html_gz' and decodes back."""
-    html = "<html><body>hello</body></html>"
-    fields = _embed_fields(html, embed_only=True)
-    assert set(fields) == {"embed_html_gz"}
-    decoded = gzip.decompress(base64.b64decode(fields["embed_html_gz"])).decode("utf-8")
-    assert decoded == html
-
-
 @pytest.mark.parametrize(
-    ("embed_html", "embed_only", "oversized", "expected"),
+    ("client_name", "expects_button"),
     [
-        # Embeddable HTML always wins, regardless of client.
-        ("<p>x</p>", True, False, {"embed_html_gz"}),
-        ("<p>x</p>", False, False, {"embed_html_gz"}),
-        # No embed available (Python-callback app or failed render):
-        # embed_only clients get the live-server placeholder...
-        ("", True, False, {"panel_server"}),
-        (None, True, False, {"panel_server"}),
-        # ...while other clients fall back to the live URL already in the payload.
-        ("", False, False, set()),
-        (None, False, False, set()),
-        # Oversized embed is dropped, then falls back the same way.
-        ("<p>too big</p>", True, True, {"panel_server"}),
-        ("<p>too big</p>", False, True, set()),
+        ("claude-ai", True),  # Claude Desktop: frame-src CSP blocks the live server
+        ("local-agent-mode-desktop", True),  # Cowork: sandboxed iframe blocks the websocket
+        ("cursor", False),  # everything else iframes the live URL directly
+        ("", False),
     ],
-    ids=[
-        "embed_claude",
-        "embed_other",
-        "empty_claude",
-        "none_claude",
-        "empty_other",
-        "none_other",
-        "oversized_claude",
-        "oversized_other",
-    ],
+    ids=["claude_desktop", "cowork", "cursor", "unknown"],
 )
-def test_embed_fields_branches(monkeypatch, embed_html, embed_only, oversized, expected):
-    if oversized:
-        monkeypatch.setattr(server_module, "_EMBED_SIZE_CAP", 1)
-    assert set(_embed_fields(embed_html, embed_only=embed_only)) == expected
+@pytest.mark.asyncio
+async def test_link_only_clients_get_the_open_in_browser_flag(monkeypatch, client_name, expects_button):
+    """Clients that cannot iframe localhost are flagged so the App shows the button.
 
-
-def test_embed_fields_cowork_cap_falls_back_to_link():
-    """An embed under the Desktop cap but over Cowork's tight cap falls back gracefully.
-
-    Cowork counts the tool result against its model token budget, so an embed that
-    Desktop would render inline must instead drop to the live-server placeholder
-    (the "open in browser" link) rather than overflowing Cowork's limit.
+    The inline embed was removed (issue #45): its base64 blob dominated the tool
+    result the model had to read, so these clients now always link out instead.
     """
-    import random
+    server_module._validation_cache.clear()
+    monkeypatch.setattr(server_module, "_get_mcp_client_name", lambda ctx: client_name)
 
-    from panel_live_server.server import _COWORK_EMBED_SIZE_CAP
-    from panel_live_server.server import _EMBED_SIZE_CAP
+    async with Client(mcp) as client:
+        result = await client.call_tool("show", {"code": "1 + 1"})
+        payload = json.loads(result.content[0].text)
 
-    # High-entropy (incompressible) body so the encoded embed lands between the
-    # two caps — repetitive content would gzip away to almost nothing.
-    rng = random.Random(0)
-    blob = base64.b64encode(bytes(rng.randrange(256) for _ in range(60_000))).decode("ascii")
-    big_html = "<html><body>" + blob + "</body></html>"
-    encoded_len = len(base64.b64encode(gzip.compress(big_html.encode("utf-8"))).decode("ascii"))
-    assert _COWORK_EMBED_SIZE_CAP < encoded_len <= _EMBED_SIZE_CAP
-
-    # Desktop cap: embeds inline. Cowork cap: drops to the placeholder link.
-    assert set(_embed_fields(big_html, embed_only=True)) == {"embed_html_gz"}
-    assert set(_embed_fields(big_html, embed_only=True, cap=_COWORK_EMBED_SIZE_CAP)) == {"panel_server"}
+    assert payload["status"] == "success"
+    assert payload.get("panel_server", False) is expects_button
+    assert payload["url"]  # the button and the iframe both need a live URL
+    assert "embed_html_gz" not in payload  # no embed is ever sent now

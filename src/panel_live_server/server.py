@@ -6,8 +6,6 @@ for executing Python code and rendering visualizations via a Panel web server.
 
 import asyncio
 import atexit
-import base64
-import gzip
 import json
 import logging
 import os
@@ -42,14 +40,6 @@ logger = logging.getLogger(__name__)
 
 SHOW_RESOURCE_URI = "ui://panel-live-server/show.html"
 SHOW_TEMPLATE_PATH = Path(__file__).parent / "templates" / "show.html"
-
-# Max size of the base64-encoded, gzipped inline embed. Larger payloads are
-# dropped in favour of the live-server URL to keep the tool response small.
-# Claude Desktop renders the embed in a webview, so it tolerates large payloads.
-_EMBED_SIZE_CAP = 150_000
-
-# Cowork counts the embed against its 25,000-token tool-result budget; keep this conservative so oversized embeds fall back to the link instead of erroring.
-_COWORK_EMBED_SIZE_CAP = 25_000
 
 # Global instances
 _manager: PanelServerManager | None = None
@@ -145,7 +135,7 @@ def _brief_error(error_detail: str) -> str:
     return brief
 
 
-# Chars per token for the payload size estimate. Prose averages ~4; base64 tokenizes worse, so embed-heavy payloads report a floor. No tokenizer bundled.
+# Chars per token for the payload size estimate. Prose averages ~4, so this is a rough figure rather than an exact count. No tokenizer bundled.
 _CHARS_PER_TOKEN = 4
 
 
@@ -158,9 +148,8 @@ def _attach_token_count(payload: dict) -> None:
     """Add a ``tokens`` estimate to *payload*, in place (issue #45).
 
     A ``show()`` result is a message in the conversation, so every byte is read
-    by the model, and the ``embed_html_gz`` blob sent to Claude Desktop and
-    Cowork can dwarf the rest while looking like one ordinary field. The count
-    covers the payload as delivered, including this field's own framing.
+    by the model. The count covers the payload as delivered, including this
+    field's own framing.
     """
     body_chars = len(json.dumps(payload))
     # Count the field about to be added so the badge reports what the model receives; a wide placeholder keeps the self-reference from rounding itself away.
@@ -236,32 +225,6 @@ def _get_mcp_client_name(ctx: Context | None) -> str:
         return ctx.request_context.session.client_params.clientInfo.name.lower()  # type: ignore[union-attr]
     except Exception:
         return ""
-
-
-def _embed_fields(embed_html: str | None, embed_only: bool, cap: int | None = None) -> dict[str, str | bool]:
-    """Build the payload fields that tell the client how to render the result.
-
-    ``embed_html`` is self-contained HTML, or ``""``/``None`` when embedding is
-    not possible (e.g. apps with Python callbacks, or a failed render). When the
-    compressed embed fits within ``cap`` it is returned for inline ``srcdoc``
-    rendering. Otherwise ``embed_only`` clients (whose iframes can't reach the
-    live server) get a placeholder signal, while other clients fall back to the
-    live URL already present in the payload.
-
-    ``cap`` is the max length of the encoded embed. It varies by client:
-    Desktop tolerates large embeds (``_EMBED_SIZE_CAP``); Cowork has a tight
-    token budget (``_COWORK_EMBED_SIZE_CAP``), so oversized embeds gracefully
-    fall back to the link rather than overflowing its limit.
-    """
-    if cap is None:
-        cap = _EMBED_SIZE_CAP
-    if embed_html:
-        encoded = base64.b64encode(gzip.compress(embed_html.encode("utf-8"))).decode("ascii")
-        if len(encoded) <= cap:
-            return {"embed_html_gz": encoded}
-    if embed_only:
-        return {"panel_server": True}
-    return {}
 
 
 def _start_panel_server() -> tuple[PanelServerManager | None, DisplayClient | None]:
@@ -355,22 +318,14 @@ async def app_lifespan(app):
         _cleanup()
 
 
-_CLAUDE_DESKTOP_INSTRUCTIONS = (
-    "IF YOU ARE CLAUDE DESKTOP\n"
-    "Visualizations are embedded inline in the chat via srcdoc — no live server connection. "
-    "Follow these rules strictly:\n"
-    "- For ANY interactive visualization (sliders, dropdowns, buttons): use Bokeh widgets "
-    "  (Slider, Select, CheckboxGroup) with jslink or CustomJS. "
-    "  Do NOT use pn.bind, @pn.depends, param.watch, or .servable() — "
-    "  these require a live Python server and will NOT work inline.\n"
-    "- Use method='inline' for all plots, static or interactive.\n"
-    "- Use method='server' ONLY for complex Panel dashboards that truly need a running Python server "
-    "  (e.g. FastListTemplate, real-time streaming, database queries). "
-    "  The user will need to open these via the 'Show Visualization' link.\n\n"
-    "IF YOU ARE ANY OTHER CLIENT (Cursor, VS Code, etc.)\n"
-    "Visualizations load via iframe.src — the live server is always reachable. "
-    "Use Panel reactive patterns (pn.bind, @pn.depends) freely. "
-    "Use method='server' for any interactive Panel app.\n\n"
+_RENDERING_INSTRUCTIONS = (
+    "RENDERING\n"
+    "Visualizations are served by the live Panel server, so Panel reactive patterns "
+    "(pn.bind, @pn.depends, param.watch, .servable()) work everywhere. "
+    "Use method='server' for any interactive Panel app.\n"
+    "Clients whose iframes cannot reach localhost (Claude Desktop, Cowork) show an "
+    "'Open in browser' button instead of an inline preview; the visualization itself "
+    "is fully interactive once opened. Nothing about the code you write changes.\n\n"
 )
 
 mcp = FastMCP(
@@ -399,7 +354,7 @@ mcp = FastMCP(
         "Other well-known libraries (Matplotlib, Plotly, seaborn, Altair) are installed ONLY\n"
         "when the optional 'pydata' dependencies are present, so they may be MISSING — prefer\n"
         "HoloViz. You do NOT need to check availability up front: if an import is not installed,\n"
-        "`show` returns the validation error — read it and rewrite using a HoloViz package.\n\n" + _CLAUDE_DESKTOP_INSTRUCTIONS + "OUTPUT\n"
+        "`show` returns the validation error — read it and rewrite using a HoloViz package.\n\n" + _RENDERING_INSTRUCTIONS + "OUTPUT\n"
         "After calling `show`, ALWAYS present the returned URL to the user as a "
         "clickable Markdown link: [Show Visualization](url)\n\n"
         "ERRORS\n"
@@ -548,13 +503,8 @@ async def show(
     global _manager, _client
 
     client_name = _get_mcp_client_name(ctx)
-    # Cowork runs as a local agent: the tool result counts against its model
-    # token budget, so its embed must stay under a tight cap.
-    is_cowork = client_name.startswith("local-agent-mode-")
-    # Clients whose iframes can't reach the live Panel server and must render
-    # embedded HTML instead: Claude Desktop ("claude-ai", frame-src CSP) and
-    # Cowork ("local-agent-mode-<connector>", sandboxed iframe blocks the websocket).
-    embed_only = client_name == "claude-ai" or is_cowork
+    # Claude Desktop (frame-src CSP) and Cowork (sandboxed iframe) cannot reach the live server, so they get an "Open in browser" button, not an inline preview.
+    link_only = client_name == "claude-ai" or client_name.startswith("local-agent-mode-")
 
     # Clamp zoom to nearest valid level
     _valid_zooms = [25, 50, 75, 100]
@@ -596,10 +546,8 @@ async def show(
 
         snippet_id = response.get("id", "")
 
-        if embed_only and snippet_id:
-            embed_html = await asyncio.to_thread(_client.get_embed_html, snippet_id)
-            cap = _COWORK_EMBED_SIZE_CAP if is_cowork else _EMBED_SIZE_CAP
-            payload.update(_embed_fields(embed_html, embed_only, cap))
+        if link_only:
+            payload["panel_server"] = True
 
         payload["status"] = "success"
         payload["message"] = "Visualization created successfully."
