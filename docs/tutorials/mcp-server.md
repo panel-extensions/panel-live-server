@@ -168,15 +168,20 @@ Or start with a simpler snippet to confirm the server is working:
 
 ### Claude Desktop Not Showing the Visualization
 
-If Claude Desktop logs an error in the client console like:
+Claude Desktop and Cowork restrict which origins their iframes may load, and `localhost` is
+not among them, so neither can preview a visualization in the chat. Both show an
+**Open in browser ↗** button instead. Click it, or open the returned
+`http://localhost:5077/view?id=...` URL yourself, and the visualization runs there with full
+interactivity against the live server.
+
+If a client console logs an error like:
 
 ```text
 Framing 'http://localhost:5077/' violates the following Content Security Policy directive: "frame-src 'self' blob: data:".
 ```
 
-then the visualization URL is valid, but Claude Desktop refused to embed it inline. This is a
-Claude Desktop host restriction on iframe origins. Open the returned `http://localhost:5077/view?id=...`
-URL in your browser instead.
+then the visualization URL is valid and the host simply refused to frame it. Open it in your
+browser instead.
 
 ### Package not found in server environment
 

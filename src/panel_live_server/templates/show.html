@@ -617,15 +617,8 @@
 
       let currentUrl = "";
       let currentCode = "";
-      let currentEmbedHtmlGz = "";
       let renderToken = 0;
       let loadTimer = null;
-
-      async function decompressGzipBase64(b64) {
-        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-        return await new Response(stream).text();
-      }
 
       function hideSpinner() {
         clearTimeout(loadTimer);
@@ -702,14 +695,11 @@
 
       const RENDER_FALLBACK_MS = 4_000;
 
-      // srcdoc (embed HTML) is already fully painted once the document loads, so hide
-      // immediately. A live /view src only has its HTML shell loaded at this point —
-      // Bokeh paints the chart a moment later over the websocket — so keep the spinner
-      // up and wait for the page's "pls-view-ready" message (with a short fallback).
+      // A live /view src only has its HTML shell loaded at this point — Bokeh paints
+      // the chart a moment later over the websocket — so keep the spinner up and wait
+      // for the page's "pls-view-ready" message (with a short fallback).
       iframe.addEventListener("load", () => {
-        if (iframe.srcdoc) {
-          hideSpinner();
-        } else if (iframe.src && iframe.src !== "about:blank") {
+        if (iframe.src && iframe.src !== "about:blank") {
           clearTimeout(loadTimer);
           loadTimer = setTimeout(hideSpinner, RENDER_FALLBACK_MS);
         }
@@ -924,7 +914,6 @@
           messageEl.classList.add(`status-${status}`);
           currentUrl = typeof parsedPayload.url === "string" ? parsedPayload.url : "";
           currentCode = typeof parsedPayload.code === "string" ? parsedPayload.code : "";
-          currentEmbedHtmlGz = typeof parsedPayload.embed_html_gz === "string" ? parsedPayload.embed_html_gz : "";
 
           // Update tab title with visualization name if available
           if (parsedPayload.name) {
@@ -956,7 +945,6 @@
           const match = rawText.match(urlRegex);
           currentUrl = match ? match[1] : "";
           currentCode = "";
-          currentEmbedHtmlGz = "";
         }
 
         const isPanelServer = parsedPayload && parsedPayload.panel_server === true;
@@ -974,30 +962,7 @@
         iframeWrapper.style.height = "";
         zoomButtons.forEach(({ btn }) => btn.style.display = "");
 
-        if (currentEmbedHtmlGz) {
-          layout.classList.add("resizable");
-          loadingOverlay.classList.remove("hidden");
-          loadingOverlay.innerHTML =
-            '<div class="spinner"></div><span>Decompressing visualization…</span>';
-          const token = ++renderToken;
-          decompressGzipBase64(currentEmbedHtmlGz)
-            .then((html) => {
-              if (token !== renderToken) return;
-              loadingOverlay.innerHTML =
-                '<div class="spinner"></div><span>Rendering visualization…</span>';
-              iframe.srcdoc = html;
-            })
-            .catch((err) => {
-              if (token !== renderToken) return;
-              hideSpinner();
-              iframe.removeAttribute("srcdoc");
-              iframe.src = "about:blank";
-              iframe.style.display = "none";
-              errorPanel.querySelector(".error-header").textContent = "✗ Decompression Error";
-              errorBody.textContent = `Failed to decompress inline visualization: ${err?.message || err}`;
-              errorPanel.classList.add("visible");
-            });
-        } else if (isPanelServer) {
+        if (isPanelServer) {
           hideSpinner();
           iframe.removeAttribute("srcdoc");
           iframe.src = "about:blank";
