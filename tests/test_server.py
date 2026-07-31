@@ -155,6 +155,39 @@ class TestBriefError:
         assert brief.endswith("…")
 
 
+class TestTokenCount:
+    """_attach_token_count() measures what a tool result costs the model (issue #45)."""
+
+    def test_count_covers_the_payload_as_delivered(self):
+        payload = {"tool": "show", "status": "success"}
+        server_module._attach_token_count(payload)
+        # The count must include its own framing, so the badge never reports
+        # less than what the model actually receives.
+        assert payload["tokens"] >= server_module._estimate_tokens(len(json.dumps(payload)))
+
+    def test_embed_dominates_the_count(self):
+        small = {"tool": "show", "code": "x = 1"}
+        server_module._attach_token_count(small)
+
+        large = {"tool": "show", "code": "x = 1", "embed_html_gz": "A" * 150_000}
+        server_module._attach_token_count(large)
+
+        assert large["tokens"] > 100 * small["tokens"]
+        assert large["tokens"] >= server_module._estimate_tokens(150_000)
+
+
+@pytest.mark.asyncio
+async def test_show_payload_reports_token_cost():
+    """Every show() result carries its token cost for the App badge (issue #45)."""
+    server_module._validation_cache.clear()
+    async with Client(mcp) as client:
+        result = await client.call_tool("show", {"code": "x = 1"})
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "success"
+        assert isinstance(payload["tokens"], int)
+        assert payload["tokens"] > 0
+
+
 @pytest.mark.asyncio
 async def test_show_retry_payload_message_carries_the_error():
     """The retry strip names the failure rather than only saying 'Render failed' (issue #33)."""
