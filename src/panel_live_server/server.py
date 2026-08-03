@@ -623,8 +623,12 @@ async def show(
 
 _DRAFT_REVIEW_REMINDER = (
     "REVIEW THIS DRAFT — the user has NOT seen it.\n"
+    "· Look at the image. Blank, empty, or just a bare axes/frame with nothing plotted? "
+    "That means the code ran but rendered nothing (e.g. a matplotlib script ending in "
+    "`plt.show()` instead of the figure) — fix the code so it actually produces output, "
+    "then call `screenshot(code=...)` again. Do not say it looks good without seeing content.\n"
     "· Wrong, ugly, cluttered, or missing something? → fix the code and call `screenshot(code=...)` again.\n"
-    "· Looks right? → call `show(code=...)` once with the final code to hand it to the user.\n"
+    "· Looks right AND shows real content? → call `show(code=...)` once with the final code to hand it to the user.\n"
     "Do not describe this draft or its problems to the user; just iterate until it is right."
 )
 
