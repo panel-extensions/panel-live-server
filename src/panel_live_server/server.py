@@ -25,6 +25,7 @@ from fastmcp.tools.tool import ToolResult
 from fastmcp.utilities.types import Image
 from mcp.types import TextContent
 
+from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
@@ -196,6 +197,28 @@ def _retry_payload(
     return json.dumps(payload)
 
 
+def _draft_failure(layer: str, detail: str) -> ToolResult:
+    """Tell the model how to fix a draft that would not render (issue #43).
+
+    A draft never reaches the user, so a failure here is not something to report
+    — it is just the next turn of the review loop. Returned as text rather than
+    raised as a ToolError so the model keeps iterating instead of surfacing an
+    error the user has no context for.
+    """
+    return ToolResult(
+        content=[
+            TextContent(
+                type="text",
+                text=(
+                    f"Draft did not render — [{layer}] {detail}\n\n"
+                    "The user has seen nothing, so do NOT report this. "
+                    "Fix the code and call screenshot(code=...) again."
+                ),
+            )
+        ]
+    )
+
+
 def _externalize_url(url: str) -> str:
     """Convert local URLs to externally reachable URLs using config.external_url."""
     if not url:
@@ -334,7 +357,13 @@ mcp = FastMCP(
         "Panel Live Server executes Python code snippets and renders the resulting "
         "visualizations as live, interactive web pages.\n\n"
         "WORKFLOW:\n"
-        "Call `show(code, name, method)` to render a visualization.\n"
+        "`show(code, name, method)` renders a visualization and gives it to the user.\n"
+        "`screenshot(code=...)` renders one and returns the picture to YOU only — nothing\n"
+        "reaches the chat and nothing is added to the user's feed.\n"
+        "So when you want to check your own output before delivering it, screenshot the\n"
+        "draft, fix what is wrong, screenshot again, and call `show` once at the end.\n"
+        "Never call `show` on work you are still iterating on, and never call it just to\n"
+        "get a snippet_id to screenshot.\n"
         "Static validation (syntax, security, packages) runs in ~50 ms.\n"
         "The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
         "DO NOT write the visualization code to a file, script, notebook, or `examples/`\n"
@@ -459,6 +488,12 @@ async def show(
 
     Always call this tool when the user asks to show, display, plot, or
     visualize anything.
+
+    IMPORTANT — this tool is for FINISHED work; calling it puts the visualization
+    in front of the user. To check your own output first, call
+    ``screenshot(code=...)`` instead — that renders the code and returns the
+    picture to you alone, with nothing appearing in the chat or the user's feed.
+    Iterate there as long as you need, then call ``show`` once at the end.
 
     IMPORTANT — pass the Python code DIRECTLY as the ``code`` argument. Do NOT
     write it to a file in the user's project first, do NOT create scripts,
@@ -586,21 +621,61 @@ async def show(
         return _retry("render", f"{e!s}. Check that the Panel server is running and the code is valid Python.")
 
 
+_DRAFT_REVIEW_REMINDER = (
+    "REVIEW THIS DRAFT — the user has NOT seen it.\n"
+    "· Look at the image. Blank, empty, or just a bare axes/frame with nothing plotted? "
+    "That means the code ran but rendered nothing (e.g. a matplotlib script ending in "
+    "`plt.show()` instead of the figure) — fix the code so it actually produces output, "
+    "then call `screenshot(code=...)` again. Do not say it looks good without seeing content.\n"
+    "· Wrong, ugly, cluttered, or missing something? → fix the code and call `screenshot(code=...)` again.\n"
+    "· Looks right AND shows real content? → call `show(code=...)` once with the final code to hand it to the user.\n"
+    "Do not describe this draft or its problems to the user; just iterate until it is right."
+)
+
+_SHOWN_IMAGE_REMINDER = (
+    "IMAGE QUALITY CHECK — before answering:\n"
+    "· Blurry, pixelated, or clipped? → answer from the code/data instead.\n"
+    "· Text/labels too small to read confidently? → answer from the code/data instead.\n"
+    "· Image is clear and complete? → answer from THIS image only. "
+    "Do NOT recompute from raw data — rendered output and raw data frequently disagree "
+    "(row order, axis inversion, sorting, binning)."
+)
+
+
 @mcp.tool(name="screenshot")
 async def screenshot(
-    snippet_id: str,
+    snippet_id: str = "",
+    code: str = "",
+    name: str = "",
+    method: Literal["inline", "server"] = "inline",
     width: int = 1200,
     height: int = 800,
-    full_page: bool = False,
     ctx: Context | None = None,
 ) -> ToolResult:
-    """See an EXISTING visualization — returns a PNG image of it to you (the LLM).
+    """See a visualization as a PNG — returns the image to you (the LLM), not to the user.
 
-    Pass the `snippet_id` that `show` returned; this tool screenshots that
-    already-rendered `/view` page and hands you the picture so you can answer a
-    follow-up question about how it LOOKS. It does NOT create or modify anything
-    and is NOT a substitute for `show` — the user already has the interactive
-    visualization in their browser.
+    ════════════════════════════════════════════════════════════════════════
+    TWO WAYS TO CALL THIS — pick one:
+    ════════════════════════════════════════════════════════════════════════
+
+    1. `screenshot(code=...)` — CHECK YOUR OWN WORK BEFORE THE USER SEES IT.
+       Renders the code and returns the picture to you alone. Nothing is added to
+       the chat and nothing is added to the user's feed. Use it to look at a
+       draft, fix what is wrong, and look again — as many rounds as you need.
+       When it finally looks right, call `show(code=...)` once to hand the
+       finished visualization to the user.
+
+       Do NOT call `show` just to get a `snippet_id` to screenshot. That puts
+       every half-finished draft in front of the user, which is exactly what this
+       parameter exists to prevent.
+
+    2. `screenshot(snippet_id=...)` — LOOK AT SOMETHING THE USER ALREADY HAS.
+       Pass the `snippet_id` that `show` returned. Use it to answer a follow-up
+       question about how an already-shown visualization LOOKS. It does not
+       create or modify anything.
+
+    Either way this is NOT a substitute for `show` — a screenshot is a still
+    picture for you; only `show` gives the user the live, interactive page.
 
     ════════════════════════════════════════════════════════════════════════
     CRITICAL RULE — answering questions ABOUT a visualization's appearance:
@@ -648,45 +723,64 @@ async def screenshot(
         · histogram        → "where is the distribution centered?"
         · any chart        → "what color is X?", "what does the legend say?"
 
-    Typical loop: `show` (returns id) → `screenshot(snippet_id=id)`
-    when the user asks something visual you can't read off the code.
+    Typical loops:
+        · building something  → `screenshot(code=...)` → revise → `screenshot(code=...)` → `show(code=...)`
+        · visual follow-up    → `show` (returns id) → `screenshot(snippet_id=id)`
 
     Parameters
     ----------
-    snippet_id : str
-        Id of the visualization to screenshot, as returned by `show`.
+    snippet_id : str, optional
+        Id of an already-shown visualization, as returned by `show`.
+    code : str, optional
+        Python code for a draft the user has not seen. Rendered, captured, and
+        discarded — it never reaches the chat or the feed. Takes precedence if
+        both this and ``snippet_id`` are given.
+    name : str, optional
+        Short display name for the draft. Only used with ``code``.
+    method : {"inline", "server"}, default "inline"
+        How to render ``code``, matching the same parameter on `show`. Use
+        ``"server"`` for Panel apps built with ``.servable()``.
     width : int, default 1200
         Browser viewport width in pixels.
     height : int, default 800
         Browser viewport height in pixels.
-    full_page : bool, default False
-        If ``True``, capture the full scrollable page rather than just the
-        viewport. Useful for tall dashboards.
 
     Returns
     -------
     Image
         PNG screenshot of the rendered visualization.
     """
-    if not snippet_id:
-        raise ToolError("Provide the snippet_id returned by show() to screenshot its rendered page.")
+    if not snippet_id and not code:
+        raise ToolError("Pass code=... to screenshot a draft, or snippet_id=... to screenshot a visualization show() already returned.")
 
-    # Capture the existing snippet's rendered /view page as a PNG.
-    # The endpoint 404s if the id is unknown.
-    png, error = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height, full_page)
-    if error:
-        raise ToolError(f"Screenshot failed: {error}")
+    await _ensure_client_ready(ctx)
+
+    if code:
+        # Static validation first so a broken draft comes back as a fixable
+        # message rather than a browser timeout. Cached by (code, method), so a
+        # later show() of the approved draft does not pay for it again.
+        validation = _run_validation(code, method)
+        if not validation["valid"]:
+            return _draft_failure(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
+
+        png, error = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height)
+        if error and error.startswith(BROWSER_UNAVAILABLE_PREFIX):
+            # No amount of rewriting fixes a missing browser — surface it instead of looping.
+            raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
+        if error:
+            return _draft_failure("render", error)
+        reminder = _DRAFT_REVIEW_REMINDER
+    else:
+        # Capture the existing snippet's rendered /view page as a PNG.
+        # The endpoint 404s if the id is unknown.
+        png, error = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
+        if error:
+            raise ToolError(f"Screenshot failed: {error}")
+        reminder = _SHOWN_IMAGE_REMINDER
+
     if not png:
         raise ToolError("Screenshot capture returned no image data.")
 
-    reminder = (
-        "IMAGE QUALITY CHECK — before answering:\n"
-        "· Blurry, pixelated, or clipped? → answer from the code/data instead.\n"
-        "· Text/labels too small to read confidently? → answer from the code/data instead.\n"
-        "· Image is clear and complete? → answer from THIS image only. "
-        "Do NOT recompute from raw data — rendered output and raw data frequently disagree "
-        "(row order, axis inversion, sorting, binning)."
-    )
     return ToolResult(
         content=[
             Image(data=png, format="png").to_image_content(),

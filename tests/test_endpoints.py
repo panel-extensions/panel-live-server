@@ -1,6 +1,8 @@
 """Tests for display REST API endpoints."""
 
 import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,8 +10,11 @@ from tornado.testing import AsyncHTTPTestCase
 from tornado.web import Application
 
 import panel_live_server.endpoints as endpoints_module
+from panel_live_server.database import SnippetDatabase
 from panel_live_server.endpoints import HealthEndpoint
+from panel_live_server.endpoints import ScreenshotEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
+from panel_live_server.validation import SecurityError
 
 
 class _FakeDB:
@@ -154,3 +159,157 @@ class TestSnippetEndpoint(AsyncHTTPTestCase):
         assert response.code == 200
         payload = json.loads(response.body.decode("utf-8"))
         assert payload["url"] == "https://config-proxy.example.dev/user/proxy/5077/view?id=snippet-123"
+
+
+class _FakeDraftDB:
+    """Fake DB recording the create/delete pair a draft screenshot performs."""
+
+    def __init__(self) -> None:
+        self.created: list[str] = []
+        self.deleted: list[str] = []
+        self.error_message: str | None = None
+        self.raise_exc: Exception | None = None
+
+    def create_visualization(self, app: str, name: str = "", description: str = "", method: str = "inline", skip_validation: bool = False) -> SimpleNamespace:
+        self.created.append(app)
+        if self.raise_exc:
+            raise self.raise_exc
+        return SimpleNamespace(id="draft-1", error_message=self.error_message)
+
+    def delete_snippet(self, snippet_id: str) -> bool:
+        self.deleted.append(snippet_id)
+        return True
+
+    def get_snippet(self, snippet_id: str) -> None:
+        return None
+
+
+class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
+    """POST /api/screenshot renders code that was never shown, then discards it (issue #43)."""
+
+    def setUp(self) -> None:
+        self.fake_db = _FakeDraftDB()
+        self._original_get_db = endpoints_module.get_db
+        endpoints_module.get_db = lambda: self.fake_db
+        super().setUp()
+
+    def tearDown(self) -> None:
+        endpoints_module.get_db = self._original_get_db
+        super().tearDown()
+
+    def get_app(self) -> Application:
+        return Application([(r"/api/screenshot", ScreenshotEndpoint)])
+
+    def _post(self, body: dict) -> object:
+        return self.fetch(
+            "/api/screenshot",
+            method="POST",
+            body=json.dumps(body),
+            headers={"Content-Type": "application/json"},
+        )
+
+    def test_draft_is_captured_then_deleted(self) -> None:
+        """A posted snippet is rendered and removed, so it never lands in the feed."""
+        captured: dict[str, str] = {}
+
+        async def fake_capture(url, **kwargs):
+            captured["url"] = url
+            return b"\x89PNG-bytes"
+
+        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+            response = self._post({"code": "1 + 1", "method": "inline"})
+
+        assert response.code == 200
+        assert response.headers["Content-Type"] == "image/png"
+        assert response.body == b"\x89PNG-bytes"
+        assert "view?id=draft-1" in captured["url"]
+        assert self.fake_db.created == ["1 + 1"]
+        assert self.fake_db.deleted == ["draft-1"]
+
+    def test_draft_is_deleted_even_when_capture_fails(self) -> None:
+        """A capture that blows up must not strand the draft in the database."""
+
+        async def boom(url, **kwargs):
+            raise RuntimeError("browser exploded")
+
+        with patch("panel_live_server.screenshot.capture_png", boom):
+            response = self._post({"code": "1 + 1"})
+
+        assert response.code == 500
+        assert self.fake_db.deleted == ["draft-1"]
+
+    def test_runtime_error_returns_400_and_deletes_the_draft(self) -> None:
+        """Code that raised during validation comes back as a message, not a picture."""
+        self.fake_db.error_message = "NameError: name 'nope' is not defined"
+
+        response = self._post({"code": "nope"})
+
+        assert response.code == 400
+        payload = json.loads(response.body.decode("utf-8"))
+        assert "NameError" in payload["message"]
+        assert self.fake_db.deleted == ["draft-1"]
+
+    def test_security_error_returns_400(self) -> None:
+        """A blocked import is reported before anything is rendered."""
+        self.fake_db.raise_exc = SecurityError("pickle is not allowed")
+
+        response = self._post({"code": "import pickle"})
+
+        assert response.code == 400
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["error"] == "SecurityError"
+        assert self.fake_db.deleted == []
+
+    def test_missing_code_returns_400(self) -> None:
+        response = self._post({"method": "inline"})
+
+        assert response.code == 400
+        assert self.fake_db.created == []
+
+    def test_get_with_unknown_id_still_404s(self) -> None:
+        """The shared-capture refactor must not lose the existing id check."""
+        response = self.fetch("/api/screenshot?id=nope")
+
+        assert response.code == 404
+
+
+class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
+    """The real database must be back to where it started once a draft is captured."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = SnippetDatabase(Path(self._tmp.name) / "drafts.db")
+        self._original_get_db = endpoints_module.get_db
+        endpoints_module.get_db = lambda: self.db
+        super().setUp()
+
+    def tearDown(self) -> None:
+        endpoints_module.get_db = self._original_get_db
+        super().tearDown()
+        self._tmp.cleanup()
+
+    def get_app(self) -> Application:
+        return Application([(r"/api/screenshot", ScreenshotEndpoint)])
+
+    def test_draft_never_reaches_the_feed(self) -> None:
+        """This is the whole point of issue #43: reviewing a draft must stay invisible."""
+        seen_ids = []
+
+        async def fake_capture(url, **kwargs):
+            # Mid-capture the row must exist — the browser has to have a page to load.
+            seen_ids.append([s.id for s in self.db.list_snippets()])
+            return b"\x89PNG"
+
+        assert self.db.list_snippets() == []
+
+        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+            response = self.fetch(
+                "/api/screenshot",
+                method="POST",
+                body=json.dumps({"code": "1 + 1", "name": "Draft", "method": "inline"}),
+                headers={"Content-Type": "application/json"},
+            )
+
+        assert response.code == 200
+        assert len(seen_ids[0]) == 1, "the draft must exist while the browser loads it"
+        assert self.db.list_snippets() == [], "the draft must be gone afterwards"
