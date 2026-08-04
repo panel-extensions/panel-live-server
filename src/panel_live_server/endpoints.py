@@ -4,6 +4,8 @@ This module implements Tornado RequestHandler classes that provide
 HTTP endpoints for creating visualizations and checking server health.
 """
 
+import contextlib
+import io
 import json
 import logging
 import sys
@@ -13,9 +15,13 @@ from datetime import timezone
 
 from tornado.web import RequestHandler
 
+from panel_live_server import diagnostics
 from panel_live_server.config import get_config
 from panel_live_server.database import get_db
+from panel_live_server.utils import execute_in_module
+from panel_live_server.utils import extract_last_expression
 from panel_live_server.validation import SecurityError
+from panel_live_server.validation import ast_check
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +212,10 @@ class ScreenshotEndpoint(RequestHandler):
 
     async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str) -> None:
         """Screenshot ``/view?id=<snippet_id>`` and write the PNG to the response."""
+        # Imported here on purpose, not at module scope: the tests patch
+        # ``panel_live_server.screenshot.capture_png``, which only takes effect if
+        # the name is looked up at call time. Hoisting these would bind the
+        # original function at import and silently defeat those patches.
         from panel_live_server.screenshot import PlaywrightUnavailableError
         from panel_live_server.screenshot import capture_png
 
@@ -219,6 +229,7 @@ class ScreenshotEndpoint(RequestHandler):
 
         view_url = f"http://{_local_host(config.host)}:{config.port}/view?id={snippet_id}"
 
+        console_lines: list[str] = []
         try:
             png = await capture_png(
                 view_url,
@@ -227,6 +238,7 @@ class ScreenshotEndpoint(RequestHandler):
                 full_page=full_page.lower() in ("1", "true", "yes"),
                 settle_ms=config.screenshot_settle_ms,
                 timeout_ms=config.screenshot_timeout_ms,
+                console_sink=console_lines,
             )
         except PlaywrightUnavailableError as e:
             self.set_status(503)
@@ -240,9 +252,94 @@ class ScreenshotEndpoint(RequestHandler):
             self.write({"error": str(e), "traceback": traceback.format_exc()})
             return
 
+        # Hand back what the render produced as well as how it looked. Carried in
+        # a header so the body stays a plain image/png for existing consumers.
+        payload = diagnostics.build(diagnostics.pop(snippet_id), console_lines)
+
         self.set_status(200)
         self.set_header("Content-Type", "image/png")
+        if payload:
+            self.set_header(diagnostics.HEADER, diagnostics.encode(payload))
         self.write(png)
+
+
+class EvaluateEndpoint(RequestHandler):
+    """Run code and return its text output — no rendering, no browser, no feed.
+
+    ``POST /api/evaluate`` with ``{"code": ...}`` executes the code and returns
+    ``{"stdout": ..., "result": ..., "error": ..., "traceback": ...}``.
+
+    This exists because the answer an agent wants is often a *value*, not a
+    picture: does this option exist, what does this return, what are the columns,
+    what range did Bokeh actually compute. Routing those through ``/screenshot``
+    means launching Chromium and rendering the text into an image purely so it
+    can be read back out of one. This is the same environment — the packages that
+    make the display server useful — reached without the browser.
+
+    Execution happens here, in the display-server process, exactly as ``/view``
+    does. The MCP process never execs snippet code.
+
+    Nothing is written to the database, so an evaluation cannot reach the feed.
+    """
+
+    def post(self):
+        """Execute the posted code and return its output as JSON."""
+        try:
+            body = json.loads(self.request.body.decode("utf-8"))
+        except ValueError:
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "ValueError", "message": "Request body must be JSON"})
+            return
+
+        code = body.get("code", "")
+        if not code:
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "ValueError", "message": "Missing 'code' in request body"})
+            return
+
+        # Belt and braces: the MCP tool validates before calling, but this
+        # endpoint is reachable on its own.
+        if syntax_error := ast_check(code):
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "SyntaxError", "message": syntax_error})
+            return
+
+        buffer = io.StringIO()
+        result_repr = ""
+        error = ""
+        tb = ""
+        module_name = f"pls_eval_{abs(hash(code)) % (10**10)}"
+
+        try:
+            with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+                statements, last_expr = extract_last_expression(code)
+                namespace = execute_in_module(statements, module_name=module_name, cleanup=False)
+                try:
+                    if last_expr:
+                        value = eval(last_expr, namespace)  # noqa: S307 - same trust boundary as /view
+                        # None is what a statement-like trailing call returns;
+                        # reporting it as a result would be noise.
+                        if value is not None:
+                            result_repr = repr(value)
+                finally:
+                    sys.modules.pop(module_name, None)
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            tb = traceback.format_exc()
+
+        self.set_status(200)
+        self.set_header("Content-Type", "application/json")
+        self.write(
+            {
+                "stdout": diagnostics.truncate(buffer.getvalue()),
+                "result": diagnostics.truncate(result_repr),
+                "error": error,
+                "traceback": diagnostics.truncate(tb),
+            }
+        )
 
 
 class HealthEndpoint(RequestHandler):

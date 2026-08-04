@@ -9,6 +9,8 @@ import logging
 
 import requests  # type: ignore[import-untyped]
 
+from panel_live_server import diagnostics
+
 logger = logging.getLogger(__name__)
 
 # Marks a screenshot failure caused by the missing headless browser rather than by the code.
@@ -103,19 +105,47 @@ class DisplayClient:
             logger.exception(f"Error creating visualization: {e}")
             raise RuntimeError(f"Failed to create visualization: {e}") from e
 
+    def evaluate(self, code: str) -> dict:
+        """Execute *code* on the server and return its text output.
+
+        Returns
+        -------
+        dict
+            ``{"stdout": str, "result": str, "error": str, "traceback": str}``, or
+            ``{"error": ..., "message": ...}`` if the request itself failed.
+        """
+        try:
+            response = self.session.post(
+                f"{self.base_url}/api/evaluate",
+                json={"code": code},
+                timeout=max(self.timeout, 60),
+            )
+        except requests.RequestException as e:
+            logger.warning("Evaluate request error: %s", e)
+            return {"error": "RequestException", "message": f"Evaluate request failed: {e}"}
+
+        try:
+            return response.json()
+        except ValueError:
+            return {
+                "error": f"HTTP {response.status_code}",
+                "message": response.text or "Evaluate returned a non-JSON response.",
+            }
+
     def get_screenshot(
         self,
         snippet_id: str,
         width: int | None = None,
         height: int | None = None,
         full_page: bool = False,
-    ) -> tuple[bytes | None, str | None]:
+    ) -> tuple[bytes | None, str | None, dict[str, str]]:
         """Fetch a PNG screenshot of a snippet's rendered ``/view`` page.
 
         Returns
         -------
-        tuple[bytes | None, str | None]
-            ``(png_bytes, None)`` on success, or ``(None, error_message)`` on failure.
+        tuple[bytes | None, str | None, dict[str, str]]
+            ``(png_bytes, None, diagnostics)`` on success, or
+            ``(None, error_message, {})`` on failure.
         """
         params: dict[str, str | int] = {"id": snippet_id, "full_page": str(full_page).lower()}
         if width:
@@ -134,7 +164,7 @@ class DisplayClient:
         width: int | None = None,
         height: int | None = None,
         full_page: bool = False,
-    ) -> tuple[bytes | None, str | None]:
+    ) -> tuple[bytes | None, str | None, dict[str, str]]:
         """Render *code* and return a PNG of it without keeping the snippet.
 
         Backs the draft path of the MCP ``screenshot`` tool (issue #43): the
@@ -143,8 +173,9 @@ class DisplayClient:
 
         Returns
         -------
-        tuple[bytes | None, str | None]
-            ``(png_bytes, None)`` on success, or ``(None, error_message)`` on failure.
+        tuple[bytes | None, str | None, dict[str, str]]
+            ``(png_bytes, None, diagnostics)`` on success, or
+            ``(None, error_message, {})`` on failure.
         """
         payload: dict[str, str | int | bool] = {
             "code": code,
@@ -160,8 +191,18 @@ class DisplayClient:
 
         return self._screenshot_request("POST", "draft", json=payload)
 
-    def _screenshot_request(self, verb: str, label: str, **kwargs) -> tuple[bytes | None, str | None]:
-        """Call ``/api/screenshot`` and unpack the PNG-or-error response."""
+    def _screenshot_request(
+        self, verb: str, label: str, **kwargs
+    ) -> tuple[bytes | None, str | None, dict[str, str]]:
+        """Call ``/api/screenshot`` and unpack the PNG-or-error response.
+
+        Returns
+        -------
+        tuple[bytes | None, str | None, dict[str, str]]
+            ``(png, error, diagnostics)``. The third element holds whatever the
+            render printed and whatever the browser logged; it is ``{}`` when the
+            render was silent or the request failed.
+        """
         try:
             response = self.session.request(
                 verb,
@@ -171,10 +212,10 @@ class DisplayClient:
             )
         except requests.RequestException as e:
             logger.warning("Screenshot request error for %s: %s", label, e)
-            return None, f"Screenshot request failed: {e}"
+            return None, f"Screenshot request failed: {e}", {}
 
         if response.status_code == 200 and "image/png" in response.headers.get("Content-Type", ""):
-            return response.content, None
+            return response.content, None, diagnostics.decode(response.headers.get(diagnostics.HEADER, ""))
 
         try:
             body = response.json()
@@ -186,7 +227,7 @@ class DisplayClient:
         except ValueError:
             message = response.text or f"HTTP {response.status_code}"
         logger.warning("Screenshot failed (HTTP %s) for %s: %s", response.status_code, label, message)
-        return None, message
+        return None, message, {}
 
     def close(self) -> None:
         """Close the HTTP session and cleanup resources."""

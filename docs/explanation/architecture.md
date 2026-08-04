@@ -14,6 +14,8 @@ MCP Client (Claude, Copilot, etc.)
   ▼
 pls mcp, MCP Server (FastMCP)
   │  HTTP  POST /api/snippet
+  │  HTTP  POST /api/screenshot
+  │  HTTP  POST /api/evaluate
   │  HTTP  GET  /api/health
   ▼
 pls serve, Panel Server (subprocess, port 5077)
@@ -22,8 +24,9 @@ pls serve, Panel Server (subprocess, port 5077)
 Browser, /view  /feed  /add  /admin
 ```
 
-**MCP Server** (`pls mcp`): Hosts the `show` and `screenshot` MCP tools. Starts the
-Panel server as a subprocess and manages its lifecycle.
+**MCP Server** (`pls mcp`): Hosts the `show`, `screenshot`, and `evaluate` MCP tools. Starts
+the Panel server as a subprocess and manages its lifecycle. It never executes snippet code
+itself — every tool forwards the code to the Panel server, which owns execution.
 
 **Panel Server** (`pls serve`): Executes Python code and serves visualizations as web pages.
 Exposes a REST API and four browser-accessible pages.
@@ -34,8 +37,14 @@ Exposes a REST API and four browser-accessible pages.
 
 ## MCP Tools
 
-The MCP server exposes two tools to the AI assistant, meant to be used together in a
-typical session.
+The MCP server exposes three tools to the AI assistant, meant to be used together in a
+typical session. They differ by *who receives what*:
+
+| Tool | Returns | To whom |
+|---|---|---|
+| `show` | a live, interactive page | the user |
+| `screenshot` | a PNG of the rendered page | the assistant |
+| `evaluate` | text — stdout and the last expression | the assistant |
 
 The **assistant** cannot install packages. It writes code against whatever is already in the
 server environment, so the MCP server's instructions steer it toward **HoloViz packages**
@@ -65,7 +74,8 @@ needed.
 The checks, in order:
 
 1. **Syntax**: `ast.parse()` catches syntax errors early
-2. **Security**: ruff security rules plus a blocked-import list
+2. **Security**: ruff security rules plus a blocked-import list — a guardrail against
+   plausible assistant mistakes, **not a sandbox** (see [Trust boundary](#trust-boundary))
 3. **Package availability**: every import must already be installed in the server environment
 4. **Panel extensions**: required extensions declared via `pn.extension()` (`server` method
    only, the `inline` method injects them automatically)
@@ -124,6 +134,46 @@ looks like.
 If the returned image is too blurry, too small, or clipped to answer confidently, the AI is
 instructed to fall back to reasoning from the code and data rather than guessing from a bad
 picture.
+
+**What the render produced, not just how it looked.** A screenshot also carries back the text
+side of the render, when there is any: anything the snippet wrote to stdout or stderr, and any
+browser console messages or uncaught page errors observed during capture. Both are truncated,
+and consecutive duplicate console lines are collapsed to `(xN)` — one failing tile prefetch can
+otherwise log the same message hundreds of times and crowd out the message that explains it.
+
+The console half matters more than it sounds. Bokeh reports layout and tile problems *only* to
+the JavaScript console (`tile extent is not fully defined`, `could not set initial ranges`), and
+a plot that fails for one of those reasons screenshots as an empty frame — visually identical to
+a plot with no data, or one drawn off-screen. Without the console the picture cannot distinguish
+them, which makes it the least informative evidence available at exactly the moment it is most
+tempting to keep taking pictures.
+
+### `evaluate`: read a value without rendering anything
+
+Not every question needs a picture. Does this option exist, what does this function return, what
+columns does the DataFrame have, what range did Bokeh actually compute — those have textual
+answers, and routing them through `screenshot` means launching Chromium and rendering the text
+into an image purely so it can be read back out of one.
+
+`evaluate` runs the code and returns what it printed plus the repr of its last expression:
+
+```python
+evaluate(code="import holoviews as hv; hv.render(plot).x_range.start")
+# => -9243970.515473438
+```
+
+The point is *which environment* it runs in. An assistant usually has some shell of its own, but
+not one with the plotting stack installed; the Panel server environment is the only place those
+packages exist. `evaluate` is access to it without the browser.
+
+Execution happens in the Panel server process, exactly as `/view` does, in a fresh throwaway
+module per call — so evaluations cannot see each other's names and nothing is left in
+`sys.modules`. Nothing is written to the database, so an evaluation can never reach the feed.
+
+The tool description is deliberately fenced: `evaluate` must not be used to answer questions
+about *appearance*. Recomputing where a peak sits or which bar is tallest from the raw data is
+the specific mistake `screenshot` exists to prevent, since the rendered plot and the data
+frequently disagree. Facts about objects go here; facts about pixels go to `screenshot`.
 
 ---
 
@@ -233,6 +283,33 @@ proxy configuration and externalizes URLs so they are accessible from the user's
 | `/feed` | Live-updating list of recent visualizations with inline previews |
 | `/add` | Web form to create snippets manually |
 | `/admin` | Management table: search, inspect, delete |
+
+---
+
+## Trust boundary
+
+Panel Live Server exists to execute arbitrary Python. `show`, `screenshot`, and `evaluate` all
+run supplied code in the Panel server process, with the full privileges of whoever started it —
+the same reach as any script that user could run directly, including their files and the network.
+
+The validation described under [`show`](#show-validate-then-render-the-visualization) is a
+**guardrail, not a sandbox**. A blocked-import list and ruff's security rules catch the plausible
+mistakes an assistant makes and refuse imports with no place in a visualization. They are static
+checks on source text, and they are not a security boundary — treat them as a way to fail early
+on obvious problems, never as containment.
+
+Two consequences worth being explicit about:
+
+- **The environment is the boundary.** Run `pls` only somewhere you would be content to run
+  arbitrary code. The choice of environment is the actual security decision; nothing inside the
+  server narrows it.
+- **The port is unauthenticated.** Anyone who can reach `/api/snippet` or `/api/evaluate` can
+  execute code in that environment. Keep it on a loopback interface or behind something that
+  authenticates, and don't publish it to an untrusted network.
+
+This is a deliberate design position rather than a gap: a local visualization server that
+validated its way to safety would also refuse most of what makes it useful. The trade is stated
+here so the deployment decision is made knowingly.
 
 ---
 

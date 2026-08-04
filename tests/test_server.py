@@ -366,7 +366,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         async with Client(mcp) as client:
             with (
-                patch.object(server_module._client, "screenshot_code", return_value=(b"\x89PNG", None)) as capture,
+                patch.object(server_module._client, "screenshot_code", return_value=(b"\x89PNG", None, {})) as capture,
                 patch.object(server_module._client, "create_snippet") as create,
             ):
                 result = await client.call_tool("screenshot", {"code": "1 + 1", "name": "Draft"})
@@ -374,7 +374,7 @@ class TestScreenshotDrafts:
         assert capture.called
         assert not create.called
         assert result.content[0].type == "image"
-        assert "REVIEW THIS DRAFT" in result.content[1].text
+        assert "REVIEW THIS DRAFT" in result.content[-1].text
 
     @pytest.mark.asyncio
     async def test_missing_browser_is_reported_not_retried(self):
@@ -384,7 +384,7 @@ class TestScreenshotDrafts:
         from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 
         server_module._validation_cache.clear()
-        failure = (None, f"{BROWSER_UNAVAILABLE_PREFIX}Chromium is not installed. Run: pls install-browser")
+        failure = (None, f"{BROWSER_UNAVAILABLE_PREFIX}Chromium is not installed. Run: pls install-browser", {})
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=failure):
                 with pytest.raises(ToolError, match="pls install-browser"):

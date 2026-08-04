@@ -13,7 +13,10 @@ install hint so callers can degrade gracefully instead of crashing.
 import asyncio
 import logging
 import os
+import subprocess
 import sys
+
+from panel_live_server.diagnostics import MAX_CONSOLE_LINES
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +42,6 @@ def install_browser() -> int:
     int
         The installer subprocess exit code (``0`` on success).
     """
-    import subprocess
-
     return subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"]).returncode
 
 
@@ -108,12 +109,30 @@ class _BrowserManager:
         full_page: bool,
         settle_ms: int,
         timeout_ms: int,
+        console_sink: list[str] | None = None,
     ) -> bytes:
-        """Load ``url`` in a fresh browser context and return a PNG screenshot."""
+        """Load ``url`` in a fresh browser context and return a PNG screenshot.
+
+        When ``console_sink`` is given, browser console messages and uncaught
+        page errors are appended to it. Bokeh reports layout and tile failures
+        only to the console, so without this a plot that dies client-side is
+        indistinguishable in the PNG from one that simply has no data.
+        """
         browser = await self._ensure_browser()
         context = await browser.new_context(viewport={"width": width, "height": height})
         try:
             page = await context.new_page()
+
+            if console_sink is not None:
+                # Subscribe before goto, or the messages emitted during initial
+                # load — the interesting ones — are missed.
+                def _note(text: str) -> None:
+                    if len(console_sink) < MAX_CONSOLE_LINES:
+                        console_sink.append(text)
+
+                page.on("console", lambda msg: _note(f"[{msg.type}] {msg.text}"))
+                page.on("pageerror", lambda err: _note(f"[pageerror] {err}"))
+
             # Use "load" rather than "networkidle": Panel's ``server`` method keeps
             # a live Bokeh websocket open, so the network never goes idle.
             await page.goto(url, wait_until="load", timeout=timeout_ms)
@@ -151,8 +170,15 @@ async def capture_png(
     full_page: bool = False,
     settle_ms: int = 1200,
     timeout_ms: int = 30000,
+    console_sink: list[str] | None = None,
 ) -> bytes:
     """Capture a PNG screenshot of ``url`` using a shared headless browser.
+
+    Parameters
+    ----------
+    console_sink : list[str], optional
+        If given, browser console messages and uncaught page errors observed
+        during the capture are appended to it.
 
     Returns
     -------
@@ -171,4 +197,5 @@ async def capture_png(
         full_page=full_page,
         settle_ms=settle_ms,
         timeout_ms=timeout_ms,
+        console_sink=console_sink,
     )
