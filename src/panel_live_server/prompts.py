@@ -1,11 +1,12 @@
-"""Render the MCP server instructions, with user overrides (issue #50).
+"""Render the prompts sent to the model, with user overrides (issue #50).
 
-The instructions FastMCP sends to the model used to be a hardcoded string in
-``server.py``. Teams have real reasons to change it — "we're a Plotly shop, stop
-recommending hvPlot", or a house style for how links are presented — and the only
-way to do that was to fork the repo.
+Every word the server puts in front of the model used to be a hardcoded string in
+``server.py``: the instructions FastMCP sends at startup, and the reminders the
+``screenshot`` tool returns alongside an image. Teams have real reasons to change
+that text — "we're a Plotly shop, stop recommending hvPlot", or a house style for
+how links are presented — and the only way to do it was to fork the repo.
 
-The text now lives in ``templates/prompts/instructions.md.j2``, carved into named
+The text now lives in ``templates/prompts/*.md.j2``, carved into named
 ``{% block %}`` sections. A user points ``pls mcp --prompts`` at a JSON file naming
 the sections they want to change::
 
@@ -39,7 +40,11 @@ logger = logging.getLogger(__name__)
 
 _BUILTIN_DIR = Path(__file__).parent / "templates" / "prompts"
 
-_INSTRUCTIONS_TEMPLATE = "instructions.md.j2"
+INSTRUCTIONS = "instructions.md.j2"
+DRAFT_REVIEW = "draft_review.md.j2"
+SHOWN_IMAGE = "shown_image.md.j2"
+
+_TEMPLATES = (INSTRUCTIONS, DRAFT_REVIEW, SHOWN_IMAGE)
 
 # The CLI writes --prompts here before rendering, so flag and env resolve through one path.
 _PROMPTS_FILE_ENV = "PANEL_LIVE_SERVER_PROMPTS_FILE"
@@ -123,18 +128,23 @@ def _build_environment():
     return SandboxedEnvironment(loader=FileSystemLoader(str(_BUILTIN_DIR)), keep_trailing_newline=False)
 
 
-def known_sections() -> list[str]:
-    """Return the section names the shipped template exposes for overriding."""
+def _blocks_in(template: str) -> list[str]:
+    """Return the block names declared by one shipped template."""
     from jinja2 import nodes
 
-    source = (_BUILTIN_DIR / _INSTRUCTIONS_TEMPLATE).read_text(encoding="utf-8")
+    source = (_BUILTIN_DIR / template).read_text(encoding="utf-8")
     return [node.name for node in _build_environment().parse(source).find_all(nodes.Block)]
 
 
-def _child_template_source(overrides: dict[str, tuple[str, str]]) -> str:
-    """Generate a template that extends the shipped one and applies *overrides*."""
+def known_sections() -> list[str]:
+    """Return every section name a --prompts file may set."""
+    return [section for template in _TEMPLATES for section in _blocks_in(template)]
+
+
+def _child_template_source(template: str, overrides: dict[str, tuple[str, str]]) -> str:
+    """Generate a template that extends *template* and applies *overrides*."""
     # super() is Jinja's name for the parent block, so "add" puts the user's rules in front of it.
-    lines = [f'{{% extends "{_INSTRUCTIONS_TEMPLATE}" %}}']
+    lines = [f'{{% extends "{template}" %}}']
     for section, (mode, _) in overrides.items():
         text = f"{{{{ {_OVERRIDE_CONTEXT_VAR}['{section}'] }}}}"
         body = text if mode == _REPLACE else f"{_USER_RULES_HEADER}\n{text}\n\n{{{{ super() }}}}"
@@ -142,30 +152,37 @@ def _child_template_source(overrides: dict[str, tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def _builtin_instructions() -> str:
-    """Render the shipped template with no overrides — the last-resort fallback."""
-    return _build_environment().get_template(_INSTRUCTIONS_TEMPLATE).render().strip()
+def _builtin(template: str) -> str:
+    """Render *template* with no overrides — the last-resort fallback."""
+    return _build_environment().get_template(template).render().strip()
+
+
+def render_prompt(template: str) -> str:
+    """Return *template* rendered with any configured overrides applied."""
+    # Any misconfiguration falls back to the shipped text rather than blocking startup.
+    try:
+        overrides = _load_overrides()
+        if unknown := [s for s in overrides if s not in known_sections()]:
+            _warn(f"Unknown prompt section(s): {', '.join(sorted(unknown))}. Known sections: {', '.join(known_sections())}.")
+
+        # A --prompts file addresses every template at once, so keep only the
+        # sections this one actually declares.
+        mine = {s: entry for s, entry in overrides.items() if s in _blocks_in(template)}
+        if not mine:
+            return _builtin(template)
+
+        texts = {section: text for section, (_, text) in mine.items()}
+        rendered = _build_environment().from_string(_child_template_source(template, mine))
+        return rendered.render(**{_OVERRIDE_CONTEXT_VAR: texts}).strip()
+    except Exception as e:
+        _warn(f"Could not render the configured prompts ({type(e).__name__}: {e}) — using the built-in prompts.")
+        try:
+            return _builtin(template)
+        except Exception:
+            logger.exception("Built-in prompt template failed to render")
+            raise
 
 
 def render_instructions() -> str:
     """Return the MCP server instructions with any configured overrides applied."""
-    # Any misconfiguration falls back to the shipped text rather than blocking startup.
-    try:
-        overrides = _load_overrides()
-        if not overrides:
-            return _builtin_instructions()
-
-        known = known_sections()
-        if unknown := [s for s in overrides if s not in known]:
-            _warn(f"Unknown prompt section(s): {', '.join(sorted(unknown))}. Known sections: {', '.join(known)}.")
-
-        texts = {section: text for section, (_, text) in overrides.items()}
-        template = _build_environment().from_string(_child_template_source(overrides))
-        return template.render(**{_OVERRIDE_CONTEXT_VAR: texts}).strip()
-    except Exception as e:
-        _warn(f"Could not render the configured prompts ({type(e).__name__}: {e}) — using the built-in prompts.")
-        try:
-            return _builtin_instructions()
-        except Exception:
-            logger.exception("Built-in prompt template failed to render")
-            raise
+    return render_prompt(INSTRUCTIONS)

@@ -29,7 +29,10 @@ from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
+from panel_live_server.prompts import DRAFT_REVIEW
+from panel_live_server.prompts import SHOWN_IMAGE
 from panel_live_server.prompts import render_instructions
+from panel_live_server.prompts import render_prompt
 from panel_live_server.utils import ExtensionError
 from panel_live_server.utils import validate_extension_availability
 from panel_live_server.validation import SecurityError
@@ -117,9 +120,6 @@ def _run_validation(code: str, method: str) -> dict:
     return result
 
 
-_BRIEF_ERROR_MAX_LEN = 140
-
-
 def _brief_error(error_detail: str) -> str:
     """Return the one-line gist of *error_detail* for the failure strip.
 
@@ -132,18 +132,16 @@ def _brief_error(error_detail: str) -> str:
     if not lines:
         return ""
     brief = lines[-1]
-    if len(brief) > _BRIEF_ERROR_MAX_LEN:
-        brief = brief[: _BRIEF_ERROR_MAX_LEN - 1] + "…"
+    max_len = get_config().brief_error_max_len
+    if len(brief) > max_len:
+        brief = brief[: max_len - 1] + "…"
     return brief
-
-
-# Chars per token for the payload size estimate. Prose averages ~4, so this is a rough figure rather than an exact count. No tokenizer bundled.
-_CHARS_PER_TOKEN = 4
 
 
 def _estimate_tokens(chars: int) -> int:
     """Estimate the token cost of *chars* characters of payload text."""
-    return round(chars / _CHARS_PER_TOKEN)
+    # Prose averages ~4 chars per token; a rough figure, as no tokenizer is bundled.
+    return round(chars / get_config().chars_per_token)
 
 
 def _attach_token_count(payload: dict) -> None:
@@ -575,27 +573,6 @@ async def show(
         return _retry("render", f"{e!s}. Check that the Panel server is running and the code is valid Python.")
 
 
-_DRAFT_REVIEW_REMINDER = (
-    "REVIEW THIS DRAFT — the user has NOT seen it.\n"
-    "· Look at the image. Blank, empty, or just a bare axes/frame with nothing plotted? "
-    "That means the code ran but rendered nothing (e.g. a matplotlib script ending in "
-    "`plt.show()` instead of the figure) — fix the code so it actually produces output, "
-    "then call `screenshot(code=...)` again. Do not say it looks good without seeing content.\n"
-    "· Wrong, ugly, cluttered, or missing something? → fix the code and call `screenshot(code=...)` again.\n"
-    "· Looks right AND shows real content? → call `show(code=...)` once with the final code to hand it to the user.\n"
-    "Do not describe this draft or its problems to the user; just iterate until it is right."
-)
-
-_SHOWN_IMAGE_REMINDER = (
-    "IMAGE QUALITY CHECK — before answering:\n"
-    "· Blurry, pixelated, or clipped? → answer from the code/data instead.\n"
-    "· Text/labels too small to read confidently? → answer from the code/data instead.\n"
-    "· Image is clear and complete? → answer from THIS image only. "
-    "Do NOT recompute from raw data — rendered output and raw data frequently disagree "
-    "(row order, axis inversion, sorting, binning)."
-)
-
-
 @mcp.tool(name="screenshot")
 async def screenshot(
     snippet_id: str = "",
@@ -723,14 +700,14 @@ async def screenshot(
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
         if error:
             return _draft_failure("render", error)
-        reminder = _DRAFT_REVIEW_REMINDER
+        reminder = render_prompt(DRAFT_REVIEW)
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.
         png, error = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
         if error:
             raise ToolError(f"Screenshot failed: {error}")
-        reminder = _SHOWN_IMAGE_REMINDER
+        reminder = render_prompt(SHOWN_IMAGE)
 
     if not png:
         raise ToolError("Screenshot capture returned no image data.")

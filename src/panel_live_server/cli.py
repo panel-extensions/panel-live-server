@@ -17,6 +17,7 @@ if sys.platform == "win32":
 import typer
 
 from panel_live_server import __version__
+from panel_live_server.prompts import render_instructions
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,7 @@ def mcp(
     if prompts:
         os.environ["PANEL_LIVE_SERVER_PROMPTS_FILE"] = prompts
 
-    from panel_live_server.prompts import render_instructions
+    # Kept local: importing server pulls in panel, ~930 ms that every other command would pay.
     from panel_live_server.server import mcp as mcp_server
 
     # server.py renders at import time, so re-render here (~1 ms) or an earlier import silently wins.

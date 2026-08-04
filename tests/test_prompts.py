@@ -5,8 +5,11 @@ import json
 import pytest
 
 from panel_live_server import prompts
+from panel_live_server.prompts import DRAFT_REVIEW
+from panel_live_server.prompts import SHOWN_IMAGE
 from panel_live_server.prompts import known_sections
 from panel_live_server.prompts import render_instructions
+from panel_live_server.prompts import render_prompt
 
 _PROMPTS_FILE_ENV = "PANEL_LIVE_SERVER_PROMPTS_FILE"
 
@@ -39,7 +42,7 @@ class TestDefaults:
         Letting a user rewrite the workflow or error semantics would let them tell
         the model something untrue about the tool, which degrades it silently.
         """
-        assert known_sections() == ["library_selection", "output"]
+        assert known_sections() == ["library_selection", "output", "draft_review", "shown_image"]
 
     def test_default_render_contains_every_section(self):
         text = render_instructions()
@@ -51,6 +54,38 @@ class TestDefaults:
 
     def test_default_recommends_holoviz(self):
         assert "PRIMARILY write visualizations with HoloViz packages" in render_instructions()
+
+
+class TestScreenshotReminders:
+    """The screenshot reminders are prompt text too, so they take overrides as well."""
+
+    def test_draft_review_default(self):
+        assert "REVIEW THIS DRAFT" in render_prompt(DRAFT_REVIEW)
+
+    def test_shown_image_default(self):
+        assert "IMAGE QUALITY CHECK" in render_prompt(SHOWN_IMAGE)
+
+    def test_draft_review_takes_an_override(self, write_prompts):
+        write_prompts({"draft_review": "Also check the axis labels are readable."})
+        text = render_prompt(DRAFT_REVIEW)
+
+        assert "Also check the axis labels are readable." in text
+        assert "REVIEW THIS DRAFT" in text  # added to, not replaced
+
+    def test_shown_image_can_be_replaced(self, write_prompts):
+        write_prompts({"shown_image": {"replace": "Just describe the image."}})
+        text = render_prompt(SHOWN_IMAGE)
+
+        assert text == "Just describe the image."
+
+    def test_sections_do_not_leak_between_templates(self, write_prompts):
+        """One file addresses every template, so each must take only its own sections."""
+        write_prompts({"library_selection": "ECharts only.", "draft_review": "Check the axes."})
+
+        assert "ECharts only." in render_instructions()
+        assert "ECharts only." not in render_prompt(DRAFT_REVIEW)
+        assert "Check the axes." in render_prompt(DRAFT_REVIEW)
+        assert "Check the axes." not in render_instructions()
 
 
 class TestAddIsTheDefault:
@@ -204,8 +239,8 @@ class TestBadConfigNeverBreaksStartup:
 
 
 def test_builtin_template_is_the_last_resort(write_prompts):
-    """_builtin_instructions ignores all configuration by construction."""
+    """_builtin ignores all configuration by construction."""
     write_prompts({"library_selection": "ignored"})
-    text = prompts._builtin_instructions()
+    text = prompts._builtin(prompts.INSTRUCTIONS)
     assert "ignored" not in text
     assert "PRIMARILY write visualizations with HoloViz packages" in text

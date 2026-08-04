@@ -147,9 +147,24 @@ class TestBriefError:
         assert server_module._brief_error("   \n  ") == ""
 
     def test_long_line_is_truncated(self):
+        from panel_live_server.config import get_config
+
         brief = server_module._brief_error("E: " + "x" * 500)
-        assert len(brief) == server_module._BRIEF_ERROR_MAX_LEN
+        assert len(brief) == get_config().brief_error_max_len
         assert brief.endswith("…")
+
+    def test_truncation_length_is_configurable(self, monkeypatch):
+        """The cap moved to config.py, so it must actually follow the setting."""
+        from panel_live_server.config import get_config
+        from panel_live_server.config import reset_config
+
+        monkeypatch.setenv("PANEL_LIVE_SERVER_BRIEF_ERROR_MAX_LEN", "40")
+        reset_config()
+        try:
+            assert get_config().brief_error_max_len == 40
+            assert len(server_module._brief_error("E: " + "x" * 500)) == 40
+        finally:
+            reset_config()
 
 
 class TestTokenCount:

@@ -246,14 +246,16 @@ use the tools: prefer HoloViz packages, present the returned URL as a Markdown l
 on. If those defaults do not match how your team works, you can customise individual
 sections without forking the project.
 
-Two sections can be customised:
+These sections can be customised:
 
 | Section | What it covers |
 | --- | --- |
 | `library_selection` | Which plotting libraries the AI should reach for |
 | `output` | How the returned URL is presented back to you |
+| `draft_review` | What the AI checks when reviewing its own screenshot before showing you |
+| `shown_image` | How the AI reads a screenshot when answering questions about it |
 
-These are the two that are genuinely a matter of preference. The rest of the prompt
+These are the parts that are genuinely a matter of preference. The rest of the prompt
 describes how the server actually behaves (that validation runs automatically, that
 `method='server'` is needed for interactive apps, what `SecurityError` means) and is
 therefore fixed. Rewriting those would let you tell the model something untrue about
