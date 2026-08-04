@@ -1,10 +1,25 @@
 """Tests for the Panel Live Server CLI."""
 
+import re
+
 from typer.testing import CliRunner
 
 from panel_live_server.cli import app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI styling from help output.
+
+    Rich styles a flag's first dash separately from the rest, so the raw text
+    holds ``\\x1b[1;36m-\\x1b[0m\\x1b[1;36m-prompts`` rather than ``--prompts``.
+    Colour is off locally and forced on in CI, so asserting against the raw
+    string passes on a laptop and fails on GitHub Actions.
+    """
+    return _ANSI.sub("", text)
 
 
 def test_help():
@@ -32,7 +47,7 @@ def test_mcp_help_documents_the_prompts_flag():
     """`--prompts` is the documented way to point at prompt overrides (issue #50)."""
     result = runner.invoke(app, ["mcp", "--help"])
     assert result.exit_code == 0
-    assert "--prompts" in result.output
+    assert "--prompts" in _plain(result.output)
 
 
 class TestPromptsFlag:
