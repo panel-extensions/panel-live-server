@@ -191,9 +191,7 @@ class DisplayClient:
 
         return self._screenshot_request("POST", "draft", json=payload)
 
-    def _screenshot_request(
-        self, verb: str, label: str, **kwargs
-    ) -> tuple[bytes | None, str | None, dict[str, str]]:
+    def _screenshot_request(self, verb: str, label: str, **kwargs) -> tuple[bytes | None, str | None, dict[str, str]]:
         """Call ``/api/screenshot`` and unpack the PNG-or-error response.
 
         Returns
