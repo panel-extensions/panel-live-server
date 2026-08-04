@@ -29,6 +29,7 @@ from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
+from panel_live_server.prompts import render_instructions
 from panel_live_server.utils import ExtensionError
 from panel_live_server.utils import validate_extension_availability
 from panel_live_server.validation import SecurityError
@@ -341,57 +342,10 @@ async def app_lifespan(app):
         _cleanup()
 
 
-_RENDERING_INSTRUCTIONS = (
-    "RENDERING\n"
-    "Visualizations are served by the live Panel server, so Panel reactive patterns "
-    "(pn.bind, @pn.depends, param.watch, .servable()) work everywhere. "
-    "Use method='server' for any interactive Panel app.\n"
-    "Clients whose iframes cannot reach localhost (Claude Desktop, Cowork) show an "
-    "'Open in browser' button instead of an inline preview; the visualization itself "
-    "is fully interactive once opened. Nothing about the code you write changes.\n\n"
-)
-
 mcp = FastMCP(
     "Panel Live Server",
-    instructions=(
-        "Panel Live Server executes Python code snippets and renders the resulting "
-        "visualizations as live, interactive web pages.\n\n"
-        "WORKFLOW:\n"
-        "`show(code, name, method)` renders a visualization and gives it to the user.\n"
-        "`screenshot(code=...)` renders one and returns the picture to YOU only — nothing\n"
-        "reaches the chat and nothing is added to the user's feed.\n"
-        "So when you want to check your own output before delivering it, screenshot the\n"
-        "draft, fix what is wrong, screenshot again, and call `show` once at the end.\n"
-        "Never call `show` on work you are still iterating on, and never call it just to\n"
-        "get a snippet_id to screenshot.\n"
-        "Static validation (syntax, security, packages) runs in ~50 ms.\n"
-        "The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
-        "DO NOT write the visualization code to a file, script, notebook, or `examples/`\n"
-        "directory, and do not run it in a separate shell/REPL. Pass the code string\n"
-        "straight to `show(code=...)` — it executes the code for you. Creating files\n"
-        "clutters the user's repository and is not wanted.\n\n"
-        "LIBRARY SELECTION:\n"
-        "PRIMARILY write visualizations with HoloViz packages — they integrate best with\n"
-        "the live server and are ALWAYS installed:\n"
-        "- hvPlot: quick interactive plots from DataFrames (.hvplot API)\n"
-        "- HoloViews: advanced composable, interactive visualizations\n"
-        "- Panel: dashboards, data apps, complex layouts (use method='server')\n"
-        "Also always available (no extra package needed):\n"
-        "- Bokeh: HoloViz's default backend, for low-level interactive web plots\n"
-        "- ECharts (pn.pane.ECharts): business-quality charts with transitions/animations, from a spec dict\n"
-        "- deck.gl (pn.pane.DeckGL): large-scale geospatial and 3D visualization, from a spec dict\n"
-        "Other well-known libraries (Matplotlib, Plotly, seaborn, Altair) are installed ONLY\n"
-        "when the optional 'pydata' dependencies are present, so they may be MISSING — prefer\n"
-        "HoloViz. You do NOT need to check availability up front: if an import is not installed,\n"
-        "`show` returns the validation error — read it and rewrite using a HoloViz package.\n\n" + _RENDERING_INSTRUCTIONS + "OUTPUT\n"
-        "After calling `show`, ALWAYS present the returned URL to the user as a "
-        "clickable Markdown link: [Show Visualization](url)\n\n"
-        "ERRORS\n"
-        "`show` raises `SecurityError` for blocked imports or dangerous patterns — "
-        "these require a substantive code rewrite, not a retry. "
-        "`show` raises `ValidationError` for syntax errors, missing packages, or "
-        "missing Panel extension declarations — fix the reported issue and try again."
-    ),
+    # Text lives in templates/prompts/instructions.md.j2, overridable per section (issue #50).
+    instructions=render_instructions(),
     lifespan=app_lifespan,
 )
 

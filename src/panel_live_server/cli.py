@@ -166,6 +166,12 @@ def mcp(
         help="Port for HTTP/SSE transport.",
         envvar="PANEL_LIVE_SERVER_MCP_PORT",
     ),
+    prompts: str = typer.Option(
+        "",
+        "--prompts",
+        help="Path to a JSON file overriding named prompt sections (e.g. library_selection). Sections you omit keep their built-in text.",
+        envvar="PANEL_LIVE_SERVER_PROMPTS_FILE",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -189,7 +195,14 @@ def mcp(
     else:
         logging.basicConfig(level=logging.INFO)
 
+    if prompts:
+        os.environ["PANEL_LIVE_SERVER_PROMPTS_FILE"] = prompts
+
+    from panel_live_server.prompts import render_instructions
     from panel_live_server.server import mcp as mcp_server
+
+    # server.py renders at import time, so re-render here (~1 ms) or an earlier import silently wins.
+    mcp_server.instructions = render_instructions()
 
     if transport == "stdio":
         mcp_server.run(transport="stdio")

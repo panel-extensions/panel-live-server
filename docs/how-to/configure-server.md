@@ -20,6 +20,7 @@ required for local use.
 | Host | `localhost` | Server host address |
 | Database | `~/.panel-live-server/snippets/snippets.db` | SQLite database path |
 | Max restarts | `3` | Maximum automatic restarts on failure |
+| AI instructions | built-in | Prompts sent to the AI in MCP mode. Override per section with `pls mcp --prompts <file>`. |
 
 ---
 
@@ -235,6 +236,148 @@ Or via CLI:
 ```bash
 pls serve --db-path /path/to/your/snippets.db
 ```
+
+---
+
+## Customising the AI Instructions
+
+When running as an MCP server, `pls` sends the AI a set of instructions telling it how to
+use the tools: prefer HoloViz packages, present the returned URL as a Markdown link, and so
+on. If those defaults do not match how your team works, you can customise individual
+sections without forking the project.
+
+Two sections can be customised:
+
+| Section | What it covers |
+| --- | --- |
+| `library_selection` | Which plotting libraries the AI should reach for |
+| `output` | How the returned URL is presented back to you |
+
+These are the two that are genuinely a matter of preference. The rest of the prompt
+describes how the server actually behaves (that validation runs automatically, that
+`method='server'` is needed for interactive apps, what `SecurityError` means) and is
+therefore fixed. Rewriting those would let you tell the model something untrue about
+the tool, which degrades its output with no visible error.
+
+### Adding your own rules
+
+**Step 1 — create the file.** Put it anywhere you like, and include only the sections you
+want to change. Here it is at `/home/you/my-prompts.json`:
+
+```json
+{
+  "library_selection": "For sine and cosine waves use hvplot, coloured pink."
+}
+```
+
+**Step 2 — point `pls mcp` at it** by adding `--prompts` and the path to your existing MCP
+configuration:
+
+=== "VS Code"
+
+    In `.vscode/mcp.json`, add to `args`:
+
+    ```json
+    {
+      "servers": {
+        "panel-live-server": {
+          "type": "stdio",
+          "command": "/path/to/pls",
+          "args": ["mcp", "--prompts", "/home/you/my-prompts.json"]
+        }
+      }
+    }
+    ```
+
+=== "Cursor"
+
+    In `~/.cursor/mcp.json`, add to `args`:
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp", "--prompts", "/home/you/my-prompts.json"]
+        }
+      }
+    }
+    ```
+
+=== "Claude Desktop"
+
+    In the config file for your OS:
+
+    - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+    - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+    - **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp", "--prompts", "/home/you/my-prompts.json"]
+        }
+      }
+    }
+    ```
+
+=== "Claude Code"
+
+    ```bash
+    claude mcp add panel-live-server -- /path/to/pls mcp --prompts /home/you/my-prompts.json
+    ```
+
+    If the server is already registered, remove it first with
+    `claude mcp remove panel-live-server`.
+
+=== "claude.ai"
+
+    Add the flag to the command you start the HTTP server with:
+
+    ```bash
+    /path/to/pls mcp --transport http --port 8001 --prompts /home/you/my-prompts.json
+    ```
+
+**Step 3 — restart the MCP server** in your client. The instructions are read once at
+startup, so nothing changes until it restarts.
+
+Your text is **added in front of** the built-in text for that section, under a header
+marking it as authoritative. Your rules are read first and win where they conflict, while
+the defaults stay in place below them as the fallback, so the AI still knows things like
+which libraries may not be installed in this environment.
+
+Include only what you want to change. Leave out `output` and it keeps its built-in text,
+and keeps tracking upstream as you upgrade. That is the reason to customise a section
+rather than copy the whole prompt: the parts you did not touch keep improving.
+
+Writing `{"add": "..."}` instead of a bare string means exactly the same thing, if you
+prefer being explicit.
+
+### Replacing a section outright
+
+If you want the built-in text gone rather than added to, say so explicitly:
+
+```json
+{
+  "library_selection": {"replace": "Use plotly.express and nothing else."}
+}
+```
+
+Use this sparingly. The default `library_selection` also tells the AI that Matplotlib,
+Plotly, seaborn and Altair may not be installed, so replacing it means the AI can no longer
+warn you before reaching for a package that is missing. Adding is usually what you want;
+replacing is for when the default actively contradicts your policy.
+
+### Things worth knowing
+
+**Restart after editing.** The instructions are read once when the MCP server starts, so
+changes to your prompts file only take effect after your AI client restarts the server.
+
+**Use an absolute path**, or one starting with `~`. A relative path is resolved against the
+server's working directory, which your MCP client chooses and you do not control, so it may
+silently fail to load.
 
 ---
 
