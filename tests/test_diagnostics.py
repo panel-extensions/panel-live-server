@@ -3,6 +3,8 @@
 import sys
 
 from panel_live_server import diagnostics
+from panel_live_server.config import get_config
+from panel_live_server.config import reset_config
 
 
 class TestRecordAndPop:
@@ -91,13 +93,39 @@ class TestBuildAndTransport:
         assert diagnostics.render({}) == ""
 
 
-class TestConsoleLineCap:
-    """The console sink is bounded by MAX_CONSOLE_LINES."""
+class TestConfigurableLimits:
+    """The two budgets live in Config and are read at call time, not at import."""
 
-    def test_cap_is_exported_for_screenshot(self) -> None:
-        # screenshot.py imports this to bound its sink; keep it importable.
-        assert isinstance(diagnostics.MAX_CONSOLE_LINES, int)
-        assert diagnostics.MAX_CONSOLE_LINES > 0
+    def teardown_method(self) -> None:
+        reset_config()
+
+    def test_defaults_are_sane(self) -> None:
+        config = get_config()
+        assert config.diagnostics_max_chars > 0
+        assert config.diagnostics_max_console_lines > 0
+
+    def test_env_var_overrides_are_wired(self, monkeypatch) -> None:
+        """A field nobody reads from the environment is a dead default."""
+        monkeypatch.setenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CHARS", "77")
+        monkeypatch.setenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CONSOLE_LINES", "9")
+        reset_config()
+        config = get_config()
+        assert config.diagnostics_max_chars == 77
+        assert config.diagnostics_max_console_lines == 9
+
+    def test_truncate_follows_config_after_reset(self, monkeypatch) -> None:
+        """The point of resolving at call time: a later reset must take effect.
+
+        A default argument would have bound the value at import and ignored this.
+        """
+        monkeypatch.setenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CHARS", "20")
+        reset_config()
+        clipped = diagnostics.truncate("x" * 500)
+        assert clipped.endswith("x" * 20)
+        assert "earlier characters omitted" in clipped
+
+    def test_explicit_limit_still_wins(self) -> None:
+        assert diagnostics.truncate("abcdef", limit=100) == "abcdef"
 
 
 class TestNoModuleLeak:

@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 
-from panel_live_server.diagnostics import MAX_CONSOLE_LINES
+from panel_live_server.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -124,10 +124,13 @@ class _BrowserManager:
             page = await context.new_page()
 
             if console_sink is not None:
+                # Resolved per capture, not at import, so reset_config() applies.
+                max_lines = get_config().diagnostics_max_console_lines
+
                 # Subscribe before goto, or the messages emitted during initial
                 # load — the interesting ones — are missed.
                 def _note(text: str) -> None:
-                    if len(console_sink) < MAX_CONSOLE_LINES:
+                    if len(console_sink) < max_lines:
                         console_sink.append(text)
 
                 page.on("console", lambda msg: _note(f"[{msg.type}] {msg.text}"))

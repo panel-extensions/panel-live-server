@@ -29,22 +29,24 @@ import logging
 from collections import OrderedDict
 from threading import Lock
 
+from panel_live_server.config import get_config
+
 logger = logging.getLogger(__name__)
 
 #: HTTP header carrying the base64-encoded diagnostics payload alongside the PNG.
 #: A header keeps the response body a plain ``image/png``, so nothing that
 #: already consumes this endpoint has to change.
+#:
+#: Deliberately NOT a config field. This is a wire contract: ``endpoints`` writes
+#: it and ``client`` reads it, and the two run in *different processes*, each
+#: resolving its own config from its own environment. A tunable value set on one
+#: side only would silently stop diagnostics coming back, with no error anywhere.
 HEADER = "X-PLS-Diagnostics"
 
+#: Snippets retained before the oldest is evicted. An internal safety valve
+#: rather than a setting: entries are consumed as soon as the capture finishes,
+#: so this only bounds growth when a render is never screenshotted.
 MAX_ENTRIES = 64
-"""Snippets retained before the oldest is evicted."""
-
-MAX_CHARS = 4000
-"""Per-stream cap. Enough for a traceback or a run of console errors, small
-enough to stay well inside Tornado's header limit once base64-encoded."""
-
-MAX_CONSOLE_LINES = 200
-"""Console messages collected per capture, before dropping the rest."""
 
 _store: OrderedDict[str, str] = OrderedDict()
 _lock = Lock()
@@ -58,11 +60,12 @@ def record(snippet_id: str, text: str) -> None:
     """
     if not snippet_id or not text or not text.strip():
         return
+    max_chars = get_config().diagnostics_max_chars
     with _lock:
         merged = _store.get(snippet_id, "") + text
         # Keep a little more than the reported cap so truncation can still show
         # the most recent output rather than an already-clipped middle.
-        _store[snippet_id] = merged[-(MAX_CHARS * 2) :]
+        _store[snippet_id] = merged[-(max_chars * 2) :]
         _store.move_to_end(snippet_id)
         while len(_store) > MAX_ENTRIES:
             _store.popitem(last=False)
@@ -74,12 +77,18 @@ def pop(snippet_id: str) -> str:
         return _store.pop(snippet_id, "")
 
 
-def truncate(text: str, limit: int = MAX_CHARS) -> str:
+def truncate(text: str, limit: int | None = None) -> str:
     """Clip *text* to *limit*, keeping the tail.
 
     The end is the informative part — a traceback's final line, or the last
     thing printed before something went wrong.
+
+    ``limit`` defaults to ``config.diagnostics_max_chars``, resolved at call
+    time. It cannot be a default argument value: that would bind whatever the
+    config held at import and ignore any later ``reset_config()``.
     """
+    if limit is None:
+        limit = get_config().diagnostics_max_chars
     if len(text) <= limit:
         return text
     omitted = len(text) - limit
