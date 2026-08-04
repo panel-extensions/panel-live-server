@@ -41,10 +41,9 @@ logger = logging.getLogger(__name__)
 _BUILTIN_DIR = Path(__file__).parent / "templates" / "prompts"
 
 INSTRUCTIONS = "instructions.md.j2"
-DRAFT_REVIEW = "draft_review.md.j2"
-SHOWN_IMAGE = "shown_image.md.j2"
+SCREENSHOT = "screenshot.md.j2"
 
-_TEMPLATES = (INSTRUCTIONS, DRAFT_REVIEW, SHOWN_IMAGE)
+_TEMPLATES = (INSTRUCTIONS, SCREENSHOT)
 
 # The CLI writes --prompts here before rendering, so flag and env resolve through one path.
 _PROMPTS_FILE_ENV = "PANEL_LIVE_SERVER_PROMPTS_FILE"
@@ -141,24 +140,46 @@ def known_sections() -> list[str]:
     return [section for template in _TEMPLATES for section in _blocks_in(template)]
 
 
-def _child_template_source(template: str, overrides: dict[str, tuple[str, str]]) -> str:
-    """Generate a template that extends *template* and applies *overrides*."""
-    # super() is Jinja's name for the parent block, so "add" puts the user's rules in front of it.
+def _builtin_block(template: str, block: str) -> str:
+    """Return one block of the shipped *template*, with no overrides applied."""
+    tmpl = _build_environment().get_template(template)
+    return "".join(tmpl.blocks[block](tmpl.new_context())).strip()
+
+
+def _layer(default_text: str, entry: tuple[str, str]) -> str:
+    """Combine the shipped text for a section with the user's override."""
+    mode, user_text = entry
+    if mode == _REPLACE:
+        return user_text
+    return f"{_USER_RULES_HEADER}\n{user_text}\n\n{default_text}"
+
+
+def _final_texts(template: str, overrides: dict[str, tuple[str, str]]) -> dict[str, str]:
+    """Resolve each overridden section to its finished text.
+
+    Layering happens here rather than via ``{{ super() }}`` in a child template:
+    Jinja only wires up ``super()`` when rendering a whole template, so a child
+    that used it would break the moment a caller asked for a single block.
+    """
+    return {section: _layer(_builtin_block(template, section), entry) for section, entry in overrides.items()}
+
+
+def _child_template_source(template: str, sections: list[str]) -> str:
+    """Generate a template that extends *template* and substitutes *sections*."""
     lines = [f'{{% extends "{template}" %}}']
-    for section, (mode, _) in overrides.items():
-        text = f"{{{{ {_OVERRIDE_CONTEXT_VAR}['{section}'] }}}}"
-        body = text if mode == _REPLACE else f"{_USER_RULES_HEADER}\n{text}\n\n{{{{ super() }}}}"
-        lines.append(f"{{% block {section} %}}{body}{{% endblock %}}")
+    lines += [f"{{% block {s} %}}{{{{ {_OVERRIDE_CONTEXT_VAR}['{s}'] }}}}{{% endblock %}}" for s in sections]
     return "\n".join(lines)
 
 
-def _builtin(template: str) -> str:
+def _builtin(template: str, block: str | None = None) -> str:
     """Render *template* with no overrides — the last-resort fallback."""
+    if block is not None:
+        return _builtin_block(template, block)
     return _build_environment().get_template(template).render().strip()
 
 
-def render_prompt(template: str) -> str:
-    """Return *template* rendered with any configured overrides applied."""
+def render_prompt(template: str, block: str | None = None) -> str:
+    """Return *template* (or one *block* of it) with configured overrides applied."""
     # Any misconfiguration falls back to the shipped text rather than blocking startup.
     try:
         overrides = _load_overrides()
@@ -169,15 +190,20 @@ def render_prompt(template: str) -> str:
         # sections this one actually declares.
         mine = {s: entry for s, entry in overrides.items() if s in _blocks_in(template)}
         if not mine:
-            return _builtin(template)
+            return _builtin(template, block)
 
-        texts = {section: text for section, (_, text) in mine.items()}
-        rendered = _build_environment().from_string(_child_template_source(template, mine))
+        texts = _final_texts(template, mine)
+        # screenshot.md.j2 holds one block per call form and emits them separately,
+        # so a caller can ask for the finished text of a single section.
+        if block is not None:
+            return texts.get(block) or _builtin_block(template, block)
+
+        rendered = _build_environment().from_string(_child_template_source(template, list(mine)))
         return rendered.render(**{_OVERRIDE_CONTEXT_VAR: texts}).strip()
     except Exception as e:
         _warn(f"Could not render the configured prompts ({type(e).__name__}: {e}) — using the built-in prompts.")
         try:
-            return _builtin(template)
+            return _builtin(template, block)
         except Exception:
             logger.exception("Built-in prompt template failed to render")
             raise

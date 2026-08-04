@@ -29,8 +29,7 @@ from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
-from panel_live_server.prompts import DRAFT_REVIEW
-from panel_live_server.prompts import SHOWN_IMAGE
+from panel_live_server.prompts import SCREENSHOT
 from panel_live_server.prompts import render_instructions
 from panel_live_server.prompts import render_prompt
 from panel_live_server.utils import ExtensionError
@@ -700,14 +699,14 @@ async def screenshot(
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
         if error:
             return _draft_failure("render", error)
-        reminder = render_prompt(DRAFT_REVIEW)
+        reminder = render_prompt(SCREENSHOT, "draft_review")
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.
         png, error = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
         if error:
             raise ToolError(f"Screenshot failed: {error}")
-        reminder = render_prompt(SHOWN_IMAGE)
+        reminder = render_prompt(SCREENSHOT, "shown_image")
 
     if not png:
         raise ToolError("Screenshot capture returned no image data.")

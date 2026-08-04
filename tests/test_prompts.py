@@ -5,8 +5,7 @@ import json
 import pytest
 
 from panel_live_server import prompts
-from panel_live_server.prompts import DRAFT_REVIEW
-from panel_live_server.prompts import SHOWN_IMAGE
+from panel_live_server.prompts import SCREENSHOT
 from panel_live_server.prompts import known_sections
 from panel_live_server.prompts import render_instructions
 from panel_live_server.prompts import render_prompt
@@ -60,21 +59,21 @@ class TestScreenshotReminders:
     """The screenshot reminders are prompt text too, so they take overrides as well."""
 
     def test_draft_review_default(self):
-        assert "REVIEW THIS DRAFT" in render_prompt(DRAFT_REVIEW)
+        assert "REVIEW THIS DRAFT" in render_prompt(SCREENSHOT, "draft_review")
 
     def test_shown_image_default(self):
-        assert "IMAGE QUALITY CHECK" in render_prompt(SHOWN_IMAGE)
+        assert "IMAGE QUALITY CHECK" in render_prompt(SCREENSHOT, "shown_image")
 
     def test_draft_review_takes_an_override(self, write_prompts):
         write_prompts({"draft_review": "Also check the axis labels are readable."})
-        text = render_prompt(DRAFT_REVIEW)
+        text = render_prompt(SCREENSHOT, "draft_review")
 
         assert "Also check the axis labels are readable." in text
         assert "REVIEW THIS DRAFT" in text  # added to, not replaced
 
     def test_shown_image_can_be_replaced(self, write_prompts):
         write_prompts({"shown_image": {"replace": "Just describe the image."}})
-        text = render_prompt(SHOWN_IMAGE)
+        text = render_prompt(SCREENSHOT, "shown_image")
 
         assert text == "Just describe the image."
 
@@ -83,9 +82,23 @@ class TestScreenshotReminders:
         write_prompts({"library_selection": "ECharts only.", "draft_review": "Check the axes."})
 
         assert "ECharts only." in render_instructions()
-        assert "ECharts only." not in render_prompt(DRAFT_REVIEW)
-        assert "Check the axes." in render_prompt(DRAFT_REVIEW)
+        assert "ECharts only." not in render_prompt(SCREENSHOT, "draft_review")
+        assert "Check the axes." in render_prompt(SCREENSHOT, "draft_review")
         assert "Check the axes." not in render_instructions()
+
+    def test_overriding_one_block_leaves_its_neighbour_alone(self, write_prompts, capsys):
+        """Both blocks share a file, so one override must not disturb the other.
+
+        Rendering a single block used to go through Jinja inheritance, which
+        silently fell back to the defaults here — the override was dropped and
+        the sibling block raised KeyError.
+        """
+        untouched = render_prompt(SCREENSHOT, "shown_image")
+        write_prompts({"draft_review": "Check the axes."})
+
+        assert "Check the axes." in render_prompt(SCREENSHOT, "draft_review")
+        assert render_prompt(SCREENSHOT, "shown_image") == untouched
+        assert capsys.readouterr().err == "", "rendering must not fall back to the defaults"
 
 
 class TestAddIsTheDefault:
