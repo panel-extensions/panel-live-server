@@ -316,8 +316,14 @@ class EvaluateEndpoint(RequestHandler):
         try:
             with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
                 statements, last_expr = extract_last_expression(code)
-                namespace = execute_in_module(statements, module_name=module_name, cleanup=False)
+                # The finally must cover execute_in_module itself, not just the
+                # eval below it. It is called with cleanup=False so the namespace
+                # survives for that eval, which means it does NOT unregister the
+                # module when the statements raise — so code ending in `raise`
+                # would otherwise leave a pls_eval_* module in sys.modules for
+                # the life of the process.
                 try:
+                    namespace = execute_in_module(statements, module_name=module_name, cleanup=False)
                     if last_expr:
                         value = eval(last_expr, namespace)  # noqa: S307 - same trust boundary as /view
                         # None is what a statement-like trailing call returns;

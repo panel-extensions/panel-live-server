@@ -77,3 +77,16 @@ class TestEvaluateEndpoint(AsyncHTTPTestCase):
     def test_module_is_not_left_in_sys_modules(self) -> None:
         self._json({"code": "z = 1\nz"})
         assert not [name for name in sys.modules if name.startswith("pls_eval_")]
+
+    def test_raising_statements_do_not_leak_the_module(self) -> None:
+        """The cleanup must cover the exec, not just the trailing eval.
+
+        ``execute_in_module`` is called with ``cleanup=False`` so its namespace
+        survives for the eval, which means it does not unregister the module when
+        the statements themselves raise. Without a ``finally`` around the exec,
+        every failing evaluation left a ``pls_eval_*`` module behind for the life
+        of the process.
+        """
+        payload = self._json({"code": "raise ValueError('kaboom')"})
+        assert payload["error"] == "ValueError: kaboom"
+        assert not [name for name in sys.modules if name.startswith("pls_eval_")]
