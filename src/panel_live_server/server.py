@@ -29,6 +29,9 @@ from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
+from panel_live_server.prompts import SCREENSHOT
+from panel_live_server.prompts import render_instructions
+from panel_live_server.prompts import render_prompt
 from panel_live_server.utils import ExtensionError
 from panel_live_server.utils import validate_extension_availability
 from panel_live_server.validation import SecurityError
@@ -116,9 +119,6 @@ def _run_validation(code: str, method: str) -> dict:
     return result
 
 
-_BRIEF_ERROR_MAX_LEN = 140
-
-
 def _brief_error(error_detail: str) -> str:
     """Return the one-line gist of *error_detail* for the failure strip.
 
@@ -131,18 +131,16 @@ def _brief_error(error_detail: str) -> str:
     if not lines:
         return ""
     brief = lines[-1]
-    if len(brief) > _BRIEF_ERROR_MAX_LEN:
-        brief = brief[: _BRIEF_ERROR_MAX_LEN - 1] + "…"
+    max_len = get_config().brief_error_max_len
+    if len(brief) > max_len:
+        brief = brief[: max_len - 1] + "…"
     return brief
-
-
-# Chars per token for the payload size estimate. Prose averages ~4, so this is a rough figure rather than an exact count. No tokenizer bundled.
-_CHARS_PER_TOKEN = 4
 
 
 def _estimate_tokens(chars: int) -> int:
     """Estimate the token cost of *chars* characters of payload text."""
-    return round(chars / _CHARS_PER_TOKEN)
+    # Prose averages ~4 chars per token; a rough figure, as no tokenizer is bundled.
+    return round(chars / get_config().chars_per_token)
 
 
 def _attach_token_count(payload: dict) -> None:
@@ -341,57 +339,10 @@ async def app_lifespan(app):
         _cleanup()
 
 
-_RENDERING_INSTRUCTIONS = (
-    "RENDERING\n"
-    "Visualizations are served by the live Panel server, so Panel reactive patterns "
-    "(pn.bind, @pn.depends, param.watch, .servable()) work everywhere. "
-    "Use method='server' for any interactive Panel app.\n"
-    "Clients whose iframes cannot reach localhost (Claude Desktop, Cowork) show an "
-    "'Open in browser' button instead of an inline preview; the visualization itself "
-    "is fully interactive once opened. Nothing about the code you write changes.\n\n"
-)
-
 mcp = FastMCP(
     "Panel Live Server",
-    instructions=(
-        "Panel Live Server executes Python code snippets and renders the resulting "
-        "visualizations as live, interactive web pages.\n\n"
-        "WORKFLOW:\n"
-        "`show(code, name, method)` renders a visualization and gives it to the user.\n"
-        "`screenshot(code=...)` renders one and returns the picture to YOU only — nothing\n"
-        "reaches the chat and nothing is added to the user's feed.\n"
-        "So when you want to check your own output before delivering it, screenshot the\n"
-        "draft, fix what is wrong, screenshot again, and call `show` once at the end.\n"
-        "Never call `show` on work you are still iterating on, and never call it just to\n"
-        "get a snippet_id to screenshot.\n"
-        "Static validation (syntax, security, packages) runs in ~50 ms.\n"
-        "The iframe loads immediately via Panel's WebSocket — no prior validate() needed.\n\n"
-        "DO NOT write the visualization code to a file, script, notebook, or `examples/`\n"
-        "directory, and do not run it in a separate shell/REPL. Pass the code string\n"
-        "straight to `show(code=...)` — it executes the code for you. Creating files\n"
-        "clutters the user's repository and is not wanted.\n\n"
-        "LIBRARY SELECTION:\n"
-        "PRIMARILY write visualizations with HoloViz packages — they integrate best with\n"
-        "the live server and are ALWAYS installed:\n"
-        "- hvPlot: quick interactive plots from DataFrames (.hvplot API)\n"
-        "- HoloViews: advanced composable, interactive visualizations\n"
-        "- Panel: dashboards, data apps, complex layouts (use method='server')\n"
-        "Also always available (no extra package needed):\n"
-        "- Bokeh: HoloViz's default backend, for low-level interactive web plots\n"
-        "- ECharts (pn.pane.ECharts): business-quality charts with transitions/animations, from a spec dict\n"
-        "- deck.gl (pn.pane.DeckGL): large-scale geospatial and 3D visualization, from a spec dict\n"
-        "Other well-known libraries (Matplotlib, Plotly, seaborn, Altair) are installed ONLY\n"
-        "when the optional 'pydata' dependencies are present, so they may be MISSING — prefer\n"
-        "HoloViz. You do NOT need to check availability up front: if an import is not installed,\n"
-        "`show` returns the validation error — read it and rewrite using a HoloViz package.\n\n" + _RENDERING_INSTRUCTIONS + "OUTPUT\n"
-        "After calling `show`, ALWAYS present the returned URL to the user as a "
-        "clickable Markdown link: [Show Visualization](url)\n\n"
-        "ERRORS\n"
-        "`show` raises `SecurityError` for blocked imports or dangerous patterns — "
-        "these require a substantive code rewrite, not a retry. "
-        "`show` raises `ValidationError` for syntax errors, missing packages, or "
-        "missing Panel extension declarations — fix the reported issue and try again."
-    ),
+    # Text lives in templates/prompts/instructions.md.j2, overridable per section (issue #50).
+    instructions=render_instructions(),
     lifespan=app_lifespan,
 )
 
@@ -621,27 +572,6 @@ async def show(
         return _retry("render", f"{e!s}. Check that the Panel server is running and the code is valid Python.")
 
 
-_DRAFT_REVIEW_REMINDER = (
-    "REVIEW THIS DRAFT — the user has NOT seen it.\n"
-    "· Look at the image. Blank, empty, or just a bare axes/frame with nothing plotted? "
-    "That means the code ran but rendered nothing (e.g. a matplotlib script ending in "
-    "`plt.show()` instead of the figure) — fix the code so it actually produces output, "
-    "then call `screenshot(code=...)` again. Do not say it looks good without seeing content.\n"
-    "· Wrong, ugly, cluttered, or missing something? → fix the code and call `screenshot(code=...)` again.\n"
-    "· Looks right AND shows real content? → call `show(code=...)` once with the final code to hand it to the user.\n"
-    "Do not describe this draft or its problems to the user; just iterate until it is right."
-)
-
-_SHOWN_IMAGE_REMINDER = (
-    "IMAGE QUALITY CHECK — before answering:\n"
-    "· Blurry, pixelated, or clipped? → answer from the code/data instead.\n"
-    "· Text/labels too small to read confidently? → answer from the code/data instead.\n"
-    "· Image is clear and complete? → answer from THIS image only. "
-    "Do NOT recompute from raw data — rendered output and raw data frequently disagree "
-    "(row order, axis inversion, sorting, binning)."
-)
-
-
 @mcp.tool(name="screenshot")
 async def screenshot(
     snippet_id: str = "",
@@ -769,14 +699,14 @@ async def screenshot(
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
         if error:
             return _draft_failure("render", error)
-        reminder = _DRAFT_REVIEW_REMINDER
+        reminder = render_prompt(SCREENSHOT, "draft_review")
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.
         png, error = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
         if error:
             raise ToolError(f"Screenshot failed: {error}")
-        reminder = _SHOWN_IMAGE_REMINDER
+        reminder = render_prompt(SCREENSHOT, "shown_image")
 
     if not png:
         raise ToolError("Screenshot capture returned no image data.")

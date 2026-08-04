@@ -193,7 +193,7 @@ automatically externalized via Jupyter Server Proxy when needed.
 | [**Tutorial: Installation**](tutorials/installation.md) | Install `pls` and connect it to your AI assistant |
 | [**Tutorial: Standalone Server**](tutorials/standalone-server.md) | Create, view, and manage visualizations from the browser |
 | [**Tutorial: MCP Server**](tutorials/mcp-server.md) | Let an AI assistant create visualizations for you |
-| [**How-to: Configure**](how-to/configure-server.md) | Custom ports, database path, MCP transport, Jupyter proxy |
+| [**How-to: Configure**](how-to/configure-server.md) | Custom ports, database path, MCP transport, Jupyter proxy, customising the AI instructions |
 | [**Explanation**](explanation/architecture.md) | Architecture, execution methods, design principles |
 | [**Reference**](reference/panel_live_server.md) | Full API reference |
 | [**Examples**](examples.md) | Copy-paste code snippets |

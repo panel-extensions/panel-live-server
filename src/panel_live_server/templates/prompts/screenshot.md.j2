@@ -1,0 +1,11 @@
+{# Prompt text the `screenshot` tool returns beside the image. One block per call
+   form; each is rendered on its own, never together. #}
+{% block draft_review %}REVIEW THIS DRAFT — the user has NOT seen it.
+· Look at the image. Blank, empty, or just a bare axes/frame with nothing plotted? That means the code ran but rendered nothing (e.g. a matplotlib script ending in `plt.show()` instead of the figure) — fix the code so it actually produces output, then call `screenshot(code=...)` again. Do not say it looks good without seeing content.
+· Wrong, ugly, cluttered, or missing something? → fix the code and call `screenshot(code=...)` again.
+· Looks right AND shows real content? → call `show(code=...)` once with the final code to hand it to the user.
+Do not describe this draft or its problems to the user; just iterate until it is right.{% endblock %}
+{% block shown_image %}IMAGE QUALITY CHECK — before answering:
+· Blurry, pixelated, or clipped? → answer from the code/data instead.
+· Text/labels too small to read confidently? → answer from the code/data instead.
+· Image is clear and complete? → answer from THIS image only. Do NOT recompute from raw data — rendered output and raw data frequently disagree (row order, axis inversion, sorting, binning).{% endblock %}

@@ -17,6 +17,7 @@ if sys.platform == "win32":
 import typer
 
 from panel_live_server import __version__
+from panel_live_server.prompts import render_instructions
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,12 @@ def mcp(
         help="Port for HTTP/SSE transport.",
         envvar="PANEL_LIVE_SERVER_MCP_PORT",
     ),
+    prompts: str = typer.Option(
+        "",
+        "--prompts",
+        help="Path to a JSON file overriding named prompt sections (e.g. library_selection). Sections you omit keep their built-in text.",
+        envvar="PANEL_LIVE_SERVER_PROMPTS_FILE",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -189,7 +196,14 @@ def mcp(
     else:
         logging.basicConfig(level=logging.INFO)
 
+    if prompts:
+        os.environ["PANEL_LIVE_SERVER_PROMPTS_FILE"] = prompts
+
+    # Kept local: importing server pulls in panel, ~930 ms that every other command would pay.
     from panel_live_server.server import mcp as mcp_server
+
+    # server.py renders at import time, so re-render here (~1 ms) or an earlier import silently wins.
+    mcp_server.instructions = render_instructions()
 
     if transport == "stdio":
         mcp_server.run(transport="stdio")

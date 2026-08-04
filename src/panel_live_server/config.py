@@ -94,6 +94,8 @@ class Config(BaseModel):
     screenshot_height: int = Field(default=800, description="Viewport height (px) for screenshot capture")
     screenshot_settle_ms: int = Field(default=1200, description="Delay (ms) after content mounts before capturing, to let Bokeh finish drawing")
     screenshot_timeout_ms: int = Field(default=30000, description="Max time (ms) to wait for the page to load before capturing")
+    brief_error_max_len: int = Field(default=140, description="Max length of the one-line error shown on the render-failed strip")
+    chars_per_token: int = Field(default=4, description="Characters per token for the payload size estimate reported by show()")
 
 
 _config: Config | None = None
@@ -114,6 +116,8 @@ def get_config() -> Config:
             screenshot_height=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_HEIGHT", "800")),
             screenshot_settle_ms=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_SETTLE_MS", "1200")),
             screenshot_timeout_ms=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_TIMEOUT_MS", "30000")),
+            brief_error_max_len=int(os.getenv("PANEL_LIVE_SERVER_BRIEF_ERROR_MAX_LEN", "140")),
+            chars_per_token=int(os.getenv("PANEL_LIVE_SERVER_CHARS_PER_TOKEN", "4")),
         )
     return _config
 
