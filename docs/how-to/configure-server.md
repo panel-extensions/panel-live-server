@@ -246,20 +246,29 @@ use the tools: prefer HoloViz packages, present the returned URL as a Markdown l
 on. If those defaults do not match how your team works, you can customise individual
 sections without forking the project.
 
-These sections can be customised:
+Every section can be customised:
 
 | Section | What it covers |
 | --- | --- |
+| `intro` | The one-line description of what the server does |
+| `workflow` | How `show` and `screenshot` relate, and that validation is automatic |
+| `file_policy` | Not writing visualization code out to files |
 | `library_selection` | Which plotting libraries the AI should reach for |
+| `rendering` | Panel reactive patterns, and clients that link out instead of embedding |
 | `output` | How the returned URL is presented back to you |
-| `draft_review` | What the AI checks when reviewing its own screenshot before showing you |
-| `shown_image` | How the AI reads a screenshot when answering questions about it |
+| `errors` | What `SecurityError` and `ValidationError` mean |
+| `screenshot` | What the AI looks for in a screenshot, both when checking its own draft and when answering questions about a chart you already have |
 
-These are the parts that are genuinely a matter of preference. The rest of the prompt
-describes how the server actually behaves (that validation runs automatically, that
-`method='server'` is needed for interactive apps, what `SecurityError` means) and is
-therefore fixed. Rewriting those would let you tell the model something untrue about
-the tool, which degrades its output with no visible error.
+`library_selection` and `output` are the ones most people want; they are pure
+preference. The others describe how the server actually behaves, so prefer adding to
+them over replacing them — a replacement that contradicts the server (say, telling the
+AI that validation must be requested) makes its output worse with nothing on screen to
+explain why.
+
+`screenshot` covers both ways the tool gets used, so a rule you add there reaches the
+AI whether it is checking its own draft or answering a question about a chart you can
+already see. The two have different built-in advice; replacing the section collapses
+them to your one text.
 
 ### Adding your own rules
 

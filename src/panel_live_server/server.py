@@ -25,6 +25,7 @@ from fastmcp.tools.tool import ToolResult
 from fastmcp.utilities.types import Image
 from mcp.types import TextContent
 
+from panel_live_server import diagnostics
 from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 from panel_live_server.client import DisplayClient
 from panel_live_server.config import get_config
@@ -571,6 +572,78 @@ async def show(
         return _retry("render", f"{e!s}. Check that the Panel server is running and the code is valid Python.")
 
 
+@mcp.tool(name="evaluate")
+async def evaluate(code: str, ctx: Context | None = None) -> str:
+    """Run Python and read its text output — no picture, no browser.
+
+    Use this when the answer you want is a VALUE, not an appearance: what a
+    function returns, whether an option is accepted, what columns a DataFrame
+    has, what range Bokeh actually computed. It executes in the same environment
+    as `show` and `screenshot`, so the plotting packages are all importable, and
+    returns whatever the code printed plus the repr of its last expression.
+
+    Prefer this over `screenshot` for anything textual. Rendering a value into a
+    Markdown pane so it can be read back out of a PNG costs a browser launch and
+    an image, and answers nothing the text would not have.
+
+    ════════════════════════════════════════════════════════════════════════
+    DO NOT use this to answer questions about how something LOOKS
+    ════════════════════════════════════════════════════════════════════════
+    Where a peak sits, which bar is tallest, what colour a series is, whether
+    the legend overlaps — those must go through `screenshot`, because the
+    rendered plot and the raw data frequently disagree (axes invert, categories
+    sort, heatmap rows flip, values get binned). Recomputing an appearance from
+    the data is the specific mistake `screenshot` exists to prevent. This tool
+    is for facts about objects, not about pixels.
+
+    Nothing here reaches the user: no feed entry, no chat message, no stored
+    snippet. It is yours to use as freely as you need.
+
+    Typical uses:
+        · check an API             → `hv.opts.Points(autohide_toolbar=True)`
+        · inspect a rendered model → `hv.render(plot).x_range.start`
+        · confirm data shape       → `df.dtypes`, `len(df)`, `df.columns.tolist()`
+        · verify availability      → `import geoviews; geoviews.__version__`
+
+    Parameters
+    ----------
+    code : str
+        Python to execute. The last expression's value is returned as its repr,
+        so a bare `df.dtypes` on the final line is enough — no `print` needed,
+        though `print` output is returned too.
+
+    Returns
+    -------
+    str
+        Captured stdout/stderr, the last expression's repr, and the traceback if
+        it raised.
+    """
+    await _ensure_client_ready(ctx)
+
+    # Same static gate as the other tools, so a typo or a blocked import comes
+    # back as a fixable message rather than a server-side traceback.
+    validation = _run_validation(code, "inline")
+    if not validation["valid"]:
+        return f"{validation.get('layer', 'validation')} error: {validation.get('message', 'Validation failed.')}"
+
+    payload = await asyncio.to_thread(_client.evaluate, code)
+
+    if payload.get("message") and not payload.get("stdout") and not payload.get("result"):
+        raise ToolError(f"Evaluate failed: {payload['message']}")
+
+    sections = []
+    if payload.get("stdout"):
+        sections.append(payload["stdout"].rstrip())
+    if payload.get("result"):
+        sections.append(f"=> {payload['result']}")
+    if payload.get("traceback"):
+        sections.append(payload["traceback"].rstrip())
+    elif payload.get("error"):
+        sections.append(payload["error"])
+
+    return "\n".join(sections) if sections else "(no output)"
+
+
 @mcp.tool(name="screenshot")
 async def screenshot(
     snippet_id: str = "",
@@ -692,7 +765,7 @@ async def screenshot(
         if not validation["valid"]:
             return _draft_failure(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
-        png, error = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height)
+        png, error, captured = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height)
         if error and error.startswith(BROWSER_UNAVAILABLE_PREFIX):
             # No amount of rewriting fixes a missing browser — surface it instead of looping.
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
@@ -702,7 +775,7 @@ async def screenshot(
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.
-        png, error = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
+        png, error, captured = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
         if error:
             raise ToolError(f"Screenshot failed: {error}")
         reminder = render_prompt(SCREENSHOT, "shown_image")
@@ -710,9 +783,14 @@ async def screenshot(
     if not png:
         raise ToolError("Screenshot capture returned no image data.")
 
-    return ToolResult(
-        content=[
-            Image(data=png, format="png").to_image_content(),
-            TextContent(type="text", text=reminder),
-        ]
-    )
+    content = [Image(data=png, format="png").to_image_content()]
+
+    # Anything the snippet printed, and anything the browser logged, comes back
+    # as text so it can be read directly rather than rendered into the picture
+    # and read back out of it. Omitted entirely when the render was silent.
+    output = diagnostics.render(captured)
+    if output:
+        content.append(TextContent(type="text", text=f"--- output ---\n{output}"))
+
+    content.append(TextContent(type="text", text=reminder))
+    return ToolResult(content=content)
