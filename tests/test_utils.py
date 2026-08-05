@@ -4,6 +4,7 @@ import concurrent.futures
 import os
 import sys
 
+import pandas as pd
 import panel as pn
 import pytest
 from bokeh.document import Document
@@ -18,6 +19,7 @@ from panel_live_server.utils import extract_last_expression
 from panel_live_server.utils import find_extensions
 from panel_live_server.utils import find_requirements
 from panel_live_server.utils import prepend_env_dll_paths
+from panel_live_server.utils import validate_code
 from panel_live_server.utils import validate_extension_availability
 
 
@@ -227,16 +229,12 @@ class TestUtils:
 
     def test_validate_code_valid(self):
         """Test validate_code with valid Python code."""
-        from panel_live_server.utils import validate_code
-
         code = "x = 1\ny = 2\nz = x + y"
         result = validate_code(code)
         assert result == ""
 
     def test_validate_code_invalid(self):
         """Test validate_code with invalid Python code."""
-        from panel_live_server.utils import validate_code
-
         code = "x = 1\ny = 2\nz = x + undefined_var"
         result = validate_code(code)
         assert "NameError" in result
@@ -244,8 +242,6 @@ class TestUtils:
     def test_validate_code_pn_state_served_is_true(self):
         """Test that pn.state.served is True during validation so errors inside
         ``if pn.state.served:`` blocks are caught."""
-        from panel_live_server.utils import validate_code
-
         code = "import panel as pn\nif pn.state.served:\n    raise RuntimeError('served block executed')\n"
         result = validate_code(code)
         assert "served block executed" in result
@@ -419,8 +415,6 @@ result = use_imports()
         namespace = execute_in_module(code, "test_multiple_imports")
         assert "result" in namespace
         # Verify it's a DataFrame
-        import pandas as pd
-
         assert isinstance(namespace["result"], pd.DataFrame)
 
     def test_complex_stock_dashboard_pattern(self):

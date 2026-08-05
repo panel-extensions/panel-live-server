@@ -1,9 +1,11 @@
 """Tests for the Panel Live Server CLI."""
 
+import os
 import re
 
 from typer.testing import CliRunner
 
+import panel_live_server.server as server_module
 from panel_live_server.cli import app
 
 runner = CliRunner()
@@ -55,15 +57,11 @@ class TestPromptsFlag:
 
     def _run_mcp(self, monkeypatch, argv):
         """Invoke `pls mcp` with the transport stubbed, returning the env it set up."""
-        import panel_live_server.server as server_module
-
         captured = {}
 
         def fake_run(*args, **kwargs):
             # server.py has already been imported (and its instructions rendered)
             # by the time the transport starts, so record the env as it stood then.
-            import os
-
             captured["PANEL_LIVE_SERVER_PROMPTS_FILE"] = os.environ.get("PANEL_LIVE_SERVER_PROMPTS_FILE")
 
         monkeypatch.setattr(server_module.mcp, "run", fake_run)
@@ -84,8 +82,6 @@ class TestPromptsFlag:
         Without an explicit re-render in the CLI, --prompts would be silently
         ignored in exactly this situation.
         """
-        import panel_live_server.server as server_module
-
         path = tmp_path / "prompts.json"
         path.write_text('{"library_selection": {"replace": "LIBRARY SELECTION:\\nPlotly only."}}', encoding="utf-8")
 

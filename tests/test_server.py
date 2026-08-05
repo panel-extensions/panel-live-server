@@ -1,6 +1,7 @@
 """Tests for the Panel Live Server MCP server."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 from fastmcp.client import Client
@@ -9,6 +10,9 @@ from typer.testing import CliRunner
 
 import panel_live_server.server as server_module
 from panel_live_server.cli import app
+from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
+from panel_live_server.config import get_config
+from panel_live_server.config import reset_config
 from panel_live_server.server import mcp
 from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ValidationError
@@ -87,16 +91,12 @@ async def test_static_validation_result_is_cached():
 
 def test_validation_error_is_tool_error_subclass():
     """ValidationError is a ToolError subclass — FastMCP surfaces it as a tool error."""
-    from fastmcp.exceptions import ToolError
-
     err = ValidationError("[syntax] bad code")
     assert isinstance(err, ToolError)
 
 
 def test_security_error_is_tool_error_subclass():
     """SecurityError is a ToolError subclass, separate from ValidationError."""
-    from fastmcp.exceptions import ToolError
-
     err = SecurityError("blocked import")
     assert isinstance(err, ToolError)
     assert not isinstance(err, ValidationError)
@@ -147,17 +147,12 @@ class TestBriefError:
         assert server_module._brief_error("   \n  ") == ""
 
     def test_long_line_is_truncated(self):
-        from panel_live_server.config import get_config
-
         brief = server_module._brief_error("E: " + "x" * 500)
         assert len(brief) == get_config().brief_error_max_len
         assert brief.endswith("…")
 
     def test_truncation_length_is_configurable(self, monkeypatch):
         """The cap moved to config.py, so it must actually follow the setting."""
-        from panel_live_server.config import get_config
-        from panel_live_server.config import reset_config
-
         monkeypatch.setenv("PANEL_LIVE_SERVER_BRIEF_ERROR_MAX_LEN", "40")
         reset_config()
         try:
@@ -231,8 +226,6 @@ async def test_show_recovers_when_client_uninitialized():
 @pytest.mark.asyncio
 async def test_show_raises_tool_error_when_startup_fails():
     """show raises ToolError when _client is None and lazy startup also fails."""
-    from unittest.mock import patch
-
     server_module._validation_cache.clear()
     client = Client(mcp)
     async with client:
@@ -249,8 +242,6 @@ async def test_show_raises_tool_error_when_startup_fails():
 @pytest.mark.asyncio
 async def test_show_caches_validation_and_reuses_on_second_call():
     """show reuses a cached static-validation result — ast_check runs only once."""
-    from unittest.mock import patch
-
     server_module._validation_cache.clear()
 
     call_count = {"n": 0}
@@ -361,8 +352,6 @@ class TestScreenshotDrafts:
     @pytest.mark.asyncio
     async def test_valid_draft_returns_an_image_and_never_creates_a_snippet(self):
         """The draft path renders via screenshot_code, not via show/create_snippet."""
-        from unittest.mock import patch
-
         server_module._validation_cache.clear()
         async with Client(mcp) as client:
             with (
@@ -379,10 +368,6 @@ class TestScreenshotDrafts:
     @pytest.mark.asyncio
     async def test_missing_browser_is_reported_not_retried(self):
         """Rewriting the code cannot install Chromium, so this must not look fixable."""
-        from unittest.mock import patch
-
-        from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
-
         server_module._validation_cache.clear()
         failure = (None, f"{BROWSER_UNAVAILABLE_PREFIX}Chromium is not installed. Run: pls install-browser", {})
         async with Client(mcp) as client:

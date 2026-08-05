@@ -1,8 +1,10 @@
 """CLI for Panel Live Server."""
 
+import errno
 import logging
 import os
 import sys
+from importlib.metadata import distributions
 from typing import Annotated
 
 # On Windows, conda/pixi environments require Library/bin and DLLs on PATH so
@@ -98,8 +100,6 @@ def serve(
     visualizations the MCP server renders. Set PANEL_LIVE_SERVER_PORT (or --port)
     to override.
     """
-    import os
-
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
     else:
@@ -125,8 +125,7 @@ def serve(
     try:
         app_main(address=host, port=port, show=show)
     except OSError as exc:
-        import errno
-
+        # requests stays local: it costs ~34 ms and only this recovery path needs it.
         import requests
 
         if exc.errno != errno.EADDRINUSE:
@@ -275,8 +274,6 @@ def list_packages(
     Optionally filter by a substring, e.g. ``pls list packages panel`` to show
     only packages whose name contains "panel".
     """
-    from importlib.metadata import distributions
-
     pkgs = sorted(
         ((dist.metadata["Name"], dist.metadata["Version"]) for dist in distributions()),
         key=lambda t: t[0].lower().replace("-", "_"),

@@ -16,6 +16,7 @@ from datetime import timezone
 from tornado.web import RequestHandler
 
 from panel_live_server import diagnostics
+from panel_live_server import screenshot
 from panel_live_server.config import get_config
 from panel_live_server.database import get_db
 from panel_live_server.utils import execute_in_module
@@ -212,13 +213,6 @@ class ScreenshotEndpoint(RequestHandler):
 
     async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str) -> None:
         """Screenshot ``/view?id=<snippet_id>`` and write the PNG to the response."""
-        # Imported here on purpose, not at module scope: the tests patch
-        # ``panel_live_server.screenshot.capture_png``, which only takes effect if
-        # the name is looked up at call time. Hoisting these would bind the
-        # original function at import and silently defeat those patches.
-        from panel_live_server.screenshot import PlaywrightUnavailableError
-        from panel_live_server.screenshot import capture_png
-
         config = get_config()
         try:
             viewport_width = int(width or config.screenshot_width)
@@ -231,7 +225,7 @@ class ScreenshotEndpoint(RequestHandler):
 
         console_lines: list[str] = []
         try:
-            png = await capture_png(
+            png = await screenshot.capture_png(
                 view_url,
                 width=viewport_width,
                 height=viewport_height,
@@ -240,7 +234,7 @@ class ScreenshotEndpoint(RequestHandler):
                 timeout_ms=config.screenshot_timeout_ms,
                 console_sink=console_lines,
             )
-        except PlaywrightUnavailableError as e:
+        except screenshot.PlaywrightUnavailableError as e:
             self.set_status(503)
             self.set_header("Content-Type", "application/json")
             self.write({"error": "PlaywrightUnavailable", "message": str(e)})
