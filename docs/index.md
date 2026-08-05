@@ -155,6 +155,10 @@ The Panel server runs as a managed subprocess with health monitoring and automat
 declarations) automatically before it executes anything. Validation is built into the render
 path, so there is no separate step to call and no double-validation overhead.
 
+These checks are a guardrail, not a sandbox — the server runs arbitrary Python with your
+privileges, so run it only in an environment you trust with that. See
+[Trust boundary](explanation/architecture.md#trust-boundary).
+
 ### See it, don't guess
 
 A `screenshot` tool captures a PNG of an already-rendered visualization in a headless browser

@@ -4,6 +4,8 @@ This module implements the /view page endpoint that executes and displays
 a single visualization by ID.
 """
 
+import contextlib
+import io
 import logging
 import sys
 import traceback
@@ -14,6 +16,7 @@ import panel as pn
 from bokeh.events import DocumentReady
 from bokeh.models import CustomJS
 
+from panel_live_server import diagnostics
 from panel_live_server.database import Snippet
 from panel_live_server.database import get_db
 from panel_live_server.utils import execute_in_module
@@ -53,7 +56,7 @@ def create_view(snippet_id: str) -> pn.viewable.Viewable | None:
 
     start_time = datetime.now(timezone.utc)
     try:
-        result = _execute_code(snippet)
+        result = _execute_capturing_output(snippet)
         execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
         snippet.status = "success"
         snippet.error_message = ""
@@ -108,6 +111,25 @@ def create_view(snippet_id: str) -> pn.viewable.Viewable | None:
         return pn.pane.Markdown(error_content, sizing_mode="stretch_width")
 
     return result
+
+
+def _execute_capturing_output(snippet: Snippet) -> pn.viewable.Viewable | None:
+    """Run the snippet, recording anything it writes to stdout/stderr.
+
+    A snippet's ``print()`` output would otherwise vanish, since the only thing
+    returned to the caller of ``screenshot`` is a picture. Recording it lets an
+    agent read computed values directly instead of building a Markdown pane just
+    to screenshot the text back out. See :mod:`panel_live_server.diagnostics`.
+
+    Capture is per-render and best-effort: the ``finally`` records whatever was
+    written before an exception, so a traceback's preceding output survives.
+    """
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+            return _execute_code(snippet)
+    finally:
+        diagnostics.record(snippet.id, buffer.getvalue())
 
 
 def _execute_code(snippet: Snippet) -> pn.viewable.Viewable | None:

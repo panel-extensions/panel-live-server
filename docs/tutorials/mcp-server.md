@@ -29,12 +29,18 @@ Ask your AI assistant:
 
 > List your available MCP tools.
 
-You should see two tools in the response:
+You should see three tools in the response:
 
 - `show`: validates the code, renders the visualization, and returns a live URL
 - `screenshot`: takes a picture of a visualization for the AI to look at — either a draft it
   has not shown you yet, so it can check its own work first, or one you already have, so it can
   answer questions about how it looks
+- `evaluate`: runs code and hands back its text output — what it printed and the value of its
+  last line. No browser, no picture. This is how the AI checks a fact ("does this option
+  exist?", "what columns does that have?") without rendering anything
+
+The three differ by who receives what: `show` gives *you* a live page, `screenshot` gives the
+*AI* a picture, and `evaluate` gives the *AI* text.
 
 ---
 
@@ -144,6 +150,8 @@ A typical AI-assisted session looks like this:
 3. The URL is shown to you, click it to open the live visualization
 4. If you ask a question about how the result looks, the AI calls `screenshot` to see it
    before answering
+5. To check a fact rather than an appearance, the AI calls `evaluate` instead — it returns
+   text, so no browser is launched and nothing is added to your feed
 
 See [Architecture](../explanation/architecture.md) for the full picture.
 
