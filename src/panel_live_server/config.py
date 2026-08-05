@@ -95,6 +95,18 @@ class Config(BaseModel):
     screenshot_settle_ms: int = Field(default=1200, description="Delay (ms) after content mounts before capturing, to let Bokeh finish drawing")
     screenshot_timeout_ms: int = Field(default=30000, description="Max time (ms) to wait for the page to load before capturing")
     brief_error_max_len: int = Field(default=140, description="Max length of the one-line error shown on the render-failed strip")
+    diagnostics_max_chars: int = Field(
+        default=4000,
+        description=(
+            "Per-stream cap (chars) on the stdout and console output returned beside a screenshot. "
+            "Large enough for a traceback or a run of console errors, small enough to stay well "
+            "inside Tornado's header limit once base64-encoded."
+        ),
+    )
+    diagnostics_max_console_lines: int = Field(
+        default=200,
+        description="Max browser console messages collected during a screenshot capture before the rest are dropped",
+    )
     chars_per_token: int = Field(default=4, description="Characters per token for the payload size estimate reported by show()")
 
 
@@ -118,6 +130,8 @@ def get_config() -> Config:
             screenshot_timeout_ms=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_TIMEOUT_MS", "30000")),
             brief_error_max_len=int(os.getenv("PANEL_LIVE_SERVER_BRIEF_ERROR_MAX_LEN", "140")),
             chars_per_token=int(os.getenv("PANEL_LIVE_SERVER_CHARS_PER_TOKEN", "4")),
+            diagnostics_max_chars=int(os.getenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CHARS", "4000")),
+            diagnostics_max_console_lines=int(os.getenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CONSOLE_LINES", "200")),
         )
     return _config
 

@@ -18,7 +18,8 @@ assistants to display and inspect Python outputs in real time.
 - **Two interfaces** — `pls serve` (standalone browser UI) and `pls mcp` (MCP server for AI assistants)
 - **Any visualization library** — hvplot · plotly · altair · matplotlib · seaborn · holoviews · bokeh · and more
 - **Validate before render** — `show` runs syntax, security, package, and extension checks before any rendering happens
-- **Visual validation** — `screenshot` MCP tool lets the AI inspect the rendered output visually before presenting it
+- **Visual validation** — `screenshot` MCP tool lets the AI inspect the rendered output visually before presenting it, and returns the snippet's stdout plus any browser console errors alongside the image
+- **Read a value, skip the picture** — `evaluate` MCP tool runs code in the server environment and returns its text output, so the AI can check a fact without launching a browser
 - **Persistent storage** — SQLite database with full-text search; every snippet gets its own permanent URL
 - **Auto-restart** — Panel subprocess is health-monitored and automatically restarted on failure
 - **Works everywhere** — local, JupyterHub, GitHub Codespaces; URLs externalized automatically
@@ -69,6 +70,25 @@ $ pls
 ```
 
 You can also use `panel-live-server` but `pls` is shorter and easier to remember.
+
+## Security
+
+**Panel Live Server executes arbitrary Python.** That is its purpose — `show`, `screenshot`,
+and `evaluate` all run code you or an AI assistant supplied, in the Panel server process, with
+the full privileges of the user who started it. It can read and write your files and reach the
+network exactly as any script you ran yourself could.
+
+The validation `show` performs — syntax, a blocked-import list, ruff's security rules, package
+availability — is a **guardrail, not a sandbox**. It catches the plausible mistakes an assistant
+makes and refuses obviously inappropriate imports. It is not a security boundary and cannot be
+relied on as one.
+
+So:
+
+- Run `pls` only in an environment you would be willing to run arbitrary code in.
+- Don't expose the server's port to an untrusted network. It has no authentication; anyone who
+  can reach `/api/snippet` or `/api/evaluate` can execute code in that environment.
+- Treat a shared or production machine as the wrong place for it.
 
 ## Development
 

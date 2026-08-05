@@ -9,6 +9,12 @@ So when you want to check your own output before delivering it, screenshot the
 draft, fix what is wrong, screenshot again, and call `show` once at the end.
 Never call `show` on work you are still iterating on, and never call it just to
 get a snippet_id to screenshot.
+`evaluate(code)` runs code and returns its TEXT output to you — whatever it
+printed plus the value of the last expression. No picture, no browser, nothing
+reaches the user. Reach for it whenever you want a VALUE rather than an
+appearance: check that an option is accepted, inspect a rendered Bokeh model,
+confirm a DataFrame's columns. Do not use it to answer how something LOOKS —
+rendered output and raw data disagree, and that is what `screenshot` is for.
 Static validation (syntax, security, packages) runs in ~50 ms.
 The iframe loads immediately via Panel's WebSocket — no prior validate() needed.{% endblock %}
 
