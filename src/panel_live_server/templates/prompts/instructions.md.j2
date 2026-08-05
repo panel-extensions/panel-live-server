@@ -1,9 +1,7 @@
-{# Whatever is a {% block %} here is exactly what --prompts accepts. Only preferences are
-   blocks; the rest states how the server behaves, and letting a user rewrite that would
-   let them tell the model something untrue about it. #}
-Panel Live Server executes Python code snippets and renders the resulting visualizations as live, interactive web pages.
+{# Every section is a {% block %}, so --prompts reaches all of them; those stating how the server behaves are safest added to rather than replaced. #}
+{% block intro %}Panel Live Server executes Python code snippets and renders the resulting visualizations as live, interactive web pages.{% endblock %}
 
-WORKFLOW:
+{% block workflow %}WORKFLOW:
 `show(code, name, method)` renders a visualization and gives it to the user.
 `screenshot(code=...)` renders one and returns the picture to YOU only — nothing
 reaches the chat and nothing is added to the user's feed.
@@ -12,12 +10,12 @@ draft, fix what is wrong, screenshot again, and call `show` once at the end.
 Never call `show` on work you are still iterating on, and never call it just to
 get a snippet_id to screenshot.
 Static validation (syntax, security, packages) runs in ~50 ms.
-The iframe loads immediately via Panel's WebSocket — no prior validate() needed.
+The iframe loads immediately via Panel's WebSocket — no prior validate() needed.{% endblock %}
 
-DO NOT write the visualization code to a file, script, notebook, or `examples/`
+{% block file_policy %}DO NOT write the visualization code to a file, script, notebook, or `examples/`
 directory, and do not run it in a separate shell/REPL. Pass the code string
 straight to `show(code=...)` — it executes the code for you. Creating files
-clutters the user's repository and is not wanted.
+clutters the user's repository and is not wanted.{% endblock %}
 
 {% block library_selection %}LIBRARY SELECTION:
 PRIMARILY write visualizations with HoloViz packages — they integrate best with
@@ -34,12 +32,12 @@ when the optional 'pydata' dependencies are present, so they may be MISSING — 
 HoloViz. You do NOT need to check availability up front: if an import is not installed,
 `show` returns the validation error — read it and rewrite using a HoloViz package.{% endblock %}
 
-RENDERING
+{% block rendering %}RENDERING
 Visualizations are served by the live Panel server, so Panel reactive patterns (pn.bind, @pn.depends, param.watch, .servable()) work everywhere. Use method='server' for any interactive Panel app.
-Clients whose iframes cannot reach localhost (Claude Desktop, Cowork) show an 'Open in browser' button instead of an inline preview; the visualization itself is fully interactive once opened. Nothing about the code you write changes.
+Clients whose iframes cannot reach localhost (Claude Desktop, Cowork) show an 'Open in browser' button instead of an inline preview; the visualization itself is fully interactive once opened. Nothing about the code you write changes.{% endblock %}
 
 {% block output %}OUTPUT
 After calling `show`, ALWAYS present the returned URL to the user as a clickable Markdown link: [Show Visualization](url){% endblock %}
 
-ERRORS
-`show` raises `SecurityError` for blocked imports or dangerous patterns — these require a substantive code rewrite, not a retry. `show` raises `ValidationError` for syntax errors, missing packages, or missing Panel extension declarations — fix the reported issue and try again.
+{% block errors %}ERRORS
+`show` raises `SecurityError` for blocked imports or dangerous patterns — these require a substantive code rewrite, not a retry. `show` raises `ValidationError` for syntax errors, missing packages, or missing Panel extension declarations — fix the reported issue and try again.{% endblock %}

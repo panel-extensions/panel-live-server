@@ -45,6 +45,9 @@ SCREENSHOT = "screenshot.md.j2"
 
 _TEMPLATES = (INSTRUCTIONS, SCREENSHOT)
 
+# Templates addressed by one section name: the screenshot tool keeps a block per call form, but configuring it is one idea to a user.
+_SINGLE_SECTION = {SCREENSHOT: "screenshot"}
+
 # The CLI writes --prompts here before rendering, so flag and env resolve through one path.
 _PROMPTS_FILE_ENV = "PANEL_LIVE_SERVER_PROMPTS_FILE"
 
@@ -137,7 +140,12 @@ def _blocks_in(template: str) -> list[str]:
 
 def known_sections() -> list[str]:
     """Return every section name a --prompts file may set."""
-    return [section for template in _TEMPLATES for section in _blocks_in(template)]
+    return [name for t in _TEMPLATES for name in ([_SINGLE_SECTION[t]] if t in _SINGLE_SECTION else _blocks_in(t))]
+
+
+def _section_for(template: str, block: str) -> str:
+    """Return the name a --prompts file uses to address *block*."""
+    return _SINGLE_SECTION.get(template, block)
 
 
 def _builtin_block(template: str, block: str) -> str:
@@ -152,16 +160,6 @@ def _layer(default_text: str, entry: tuple[str, str]) -> str:
     if mode == _REPLACE:
         return user_text
     return f"{_USER_RULES_HEADER}\n{user_text}\n\n{default_text}"
-
-
-def _final_texts(template: str, overrides: dict[str, tuple[str, str]]) -> dict[str, str]:
-    """Resolve each overridden section to its finished text.
-
-    Layering happens here rather than via ``{{ super() }}`` in a child template:
-    Jinja only wires up ``super()`` when rendering a whole template, so a child
-    that used it would break the moment a caller asked for a single block.
-    """
-    return {section: _layer(_builtin_block(template, section), entry) for section, entry in overrides.items()}
 
 
 def _child_template_source(template: str, sections: list[str]) -> str:
@@ -186,18 +184,18 @@ def render_prompt(template: str, block: str | None = None) -> str:
         if unknown := [s for s in overrides if s not in known_sections()]:
             _warn(f"Unknown prompt section(s): {', '.join(sorted(unknown))}. Known sections: {', '.join(known_sections())}.")
 
-        # A --prompts file addresses every template at once, so keep only the
-        # sections this one actually declares.
+        if block is not None:
+            # Layered directly: Jinja only wires up {{ super() }} for a whole-template render.
+            default = _builtin_block(template, block)
+            entry = overrides.get(_section_for(template, block))
+            return _layer(default, entry) if entry else default
+
+        # A --prompts file addresses every template at once, so keep only this one's sections.
         mine = {s: entry for s, entry in overrides.items() if s in _blocks_in(template)}
         if not mine:
-            return _builtin(template, block)
+            return _builtin(template)
 
-        texts = _final_texts(template, mine)
-        # screenshot.md.j2 holds one block per call form and emits them separately,
-        # so a caller can ask for the finished text of a single section.
-        if block is not None:
-            return texts.get(block) or _builtin_block(template, block)
-
+        texts = {s: _layer(_builtin_block(template, s), entry) for s, entry in mine.items()}
         rendered = _build_environment().from_string(_child_template_source(template, list(mine)))
         return rendered.render(**{_OVERRIDE_CONTEXT_VAR: texts}).strip()
     except Exception as e:
