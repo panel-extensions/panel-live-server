@@ -7,6 +7,7 @@ startup, health checks, and shutdown.
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -100,8 +101,6 @@ class PanelServerManager:
 
     def _is_port_in_use(self) -> bool:
         """Check if the configured port is already in use."""
-        import socket
-
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
                 s.bind((self.host, self.port))

@@ -32,6 +32,7 @@ from panel_live_server.manager import PanelServerManager
 from panel_live_server.prompts import SCREENSHOT
 from panel_live_server.prompts import render_instructions
 from panel_live_server.prompts import render_prompt
+from panel_live_server.screenshot import is_browser_installed
 from panel_live_server.utils import ExtensionError
 from panel_live_server.utils import validate_extension_availability
 from panel_live_server.validation import SecurityError
@@ -324,8 +325,6 @@ async def app_lifespan(app):
     # rather than mid-screenshot. The check uses Playwright's sync API, so run
     # it in a worker thread to stay off the event loop.
     try:
-        from panel_live_server.screenshot import is_browser_installed
-
         if not await asyncio.to_thread(is_browser_installed):
             msg = "The `screenshot` tool needs Chromium, which is not installed. Run `pls install-browser` to enable it."
             print(f"\n  {msg}\n", file=sys.stderr, flush=True)  # noqa: T201

@@ -13,6 +13,7 @@ install hint so callers can degrade gracefully instead of crashing.
 import asyncio
 import logging
 import os
+import subprocess
 import sys
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,6 @@ def install_browser() -> int:
     int
         The installer subprocess exit code (``0`` on success).
     """
-    import subprocess
-
     return subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"]).returncode
 
 

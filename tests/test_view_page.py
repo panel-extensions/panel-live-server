@@ -9,6 +9,8 @@ import pytest
 
 from panel_live_server.database import Snippet
 from panel_live_server.database import SnippetDatabase
+from panel_live_server.pages.view_page import _execute_code
+from panel_live_server.pages.view_page import create_view
 
 
 def _make_snippet(app: str, method: str = "inline") -> Snippet:
@@ -20,8 +22,6 @@ class TestExecuteCodeNoPreambleInjection:
 
     def test_jupyter_app_has_no_extension_call(self):
         """_execute_code does not inject pn.extension() into the executed code string."""
-        from panel_live_server.pages.view_page import _execute_code
-
         snippet = _make_snippet("x = 1  # plotly visualization")
         captured = {}
 
@@ -44,8 +44,6 @@ class TestExecuteCodeNoPreambleInjection:
 
     def test_panel_method_code_unchanged(self):
         """panel method passes code through without extra extension calls."""
-        from panel_live_server.pages.view_page import _execute_code
-
         snippet = _make_snippet(
             "import panel as pn\npn.extension('plotly')\nx = 1",
             method="server",
@@ -76,8 +74,6 @@ class TestCreateViewExtensionLoading:
 
     def test_plotly_extension_loaded_at_session_level(self, temp_db):
         """create_view() calls pn.extension('plotly', 'codeeditor') for plotly code."""
-        from panel_live_server.pages.view_page import create_view
-
         snippet = temp_db.create_snippet(_make_snippet("x = 1  # plotly visualization"))
         pn_mock = MagicMock()
 
@@ -96,8 +92,6 @@ class TestCreateViewExtensionLoading:
 
     def test_no_extra_extensions_for_plain_code(self, temp_db):
         """create_view() only loads codeeditor for plain code with no special extensions."""
-        from panel_live_server.pages.view_page import create_view
-
         snippet = temp_db.create_snippet(_make_snippet("x = 1 + 2"))
         pn_mock = MagicMock()
 
@@ -115,8 +109,6 @@ class TestCreateViewExtensionLoading:
 
     def test_multiple_extensions_loaded(self, temp_db):
         """create_view() loads all detected extensions in a single pn.extension() call."""
-        from panel_live_server.pages.view_page import create_view
-
         snippet = temp_db.create_snippet(_make_snippet("x = 1  # plotly altair chart"))
         pn_mock = MagicMock()
 

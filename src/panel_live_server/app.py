@@ -8,6 +8,8 @@ import logging
 from urllib.parse import urlparse
 
 from panel_live_server.config import get_config
+from panel_live_server.config import reset_config
+from panel_live_server.database import get_db
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import ScreenshotEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
@@ -62,9 +64,9 @@ def _build_websocket_origins(address: str, port: int) -> list[str]:
 
 def main(address: str = "localhost", port: int = 5077, show: bool = True) -> None:
     """Start the Panel server."""
+    # panel and the pages stay local: ~580 ms and ~930 ms, only `pls serve` needs them.
     import panel as pn
 
-    from panel_live_server.database import get_db
     from panel_live_server.pages import add_page
     from panel_live_server.pages import admin_page
     from panel_live_server.pages import feed_page
@@ -116,8 +118,6 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
 
 if __name__ == "__main__":
     # Read config from env vars when run as subprocess
-    from panel_live_server.config import reset_config
-
     reset_config()
     config = get_config()
     main(address=config.host, port=config.port, show=False)
