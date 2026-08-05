@@ -35,13 +35,18 @@ def write_prompts(monkeypatch, tmp_path):
 class TestDefaults:
     """With no --prompts file, the shipped prompt is used unchanged."""
 
-    def test_only_preference_sections_are_overridable(self):
-        """Sections describing how the server behaves are deliberately not blocks.
-
-        Letting a user rewrite the workflow or error semantics would let them tell
-        the model something untrue about the tool, which degrades it silently.
-        """
-        assert known_sections() == ["library_selection", "output", "draft_review", "shown_image"]
+    def test_every_section_is_overridable(self):
+        """Whatever is a block is exactly what a --prompts file may set."""
+        assert known_sections() == [
+            "intro",
+            "workflow",
+            "file_policy",
+            "library_selection",
+            "rendering",
+            "output",
+            "errors",
+            "screenshot",
+        ]
 
     def test_default_render_contains_every_section(self):
         text = render_instructions()
@@ -55,8 +60,8 @@ class TestDefaults:
         assert "PRIMARILY write visualizations with HoloViz packages" in render_instructions()
 
 
-class TestScreenshotReminders:
-    """The screenshot reminders are prompt text too, so they take overrides as well."""
+class TestScreenshotPrompt:
+    """The screenshot tool's prompt is one configurable section covering both call forms."""
 
     def test_draft_review_default(self):
         assert "REVIEW THIS DRAFT" in render_prompt(SCREENSHOT, "draft_review")
@@ -64,40 +69,40 @@ class TestScreenshotReminders:
     def test_shown_image_default(self):
         assert "IMAGE QUALITY CHECK" in render_prompt(SCREENSHOT, "shown_image")
 
-    def test_draft_review_takes_an_override(self, write_prompts):
-        write_prompts({"draft_review": "Also check the axis labels are readable."})
-        text = render_prompt(SCREENSHOT, "draft_review")
+    def test_the_two_call_forms_keep_distinct_defaults(self):
+        """Reviewing your own draft and reading a shown image need different advice."""
+        assert "IMAGE QUALITY CHECK" not in render_prompt(SCREENSHOT, "draft_review")
+        assert "REVIEW THIS DRAFT" not in render_prompt(SCREENSHOT, "shown_image")
 
-        assert "Also check the axis labels are readable." in text
-        assert "REVIEW THIS DRAFT" in text  # added to, not replaced
+    def test_one_key_reaches_both_call_forms(self, write_prompts):
+        write_prompts({"screenshot": "Also check the axis labels are readable."})
 
-    def test_shown_image_can_be_replaced(self, write_prompts):
-        write_prompts({"shown_image": {"replace": "Just describe the image."}})
-        text = render_prompt(SCREENSHOT, "shown_image")
+        for block, default in [("draft_review", "REVIEW THIS DRAFT"), ("shown_image", "IMAGE QUALITY CHECK")]:
+            text = render_prompt(SCREENSHOT, block)
+            assert "Also check the axis labels are readable." in text
+            assert default in text  # added to, not replaced
 
-        assert text == "Just describe the image."
+    def test_replace_drops_the_defaults_for_both(self, write_prompts):
+        write_prompts({"screenshot": {"replace": "Just describe the image."}})
 
-    def test_sections_do_not_leak_between_templates(self, write_prompts):
-        """One file addresses every template, so each must take only its own sections."""
-        write_prompts({"library_selection": "ECharts only.", "draft_review": "Check the axes."})
+        assert render_prompt(SCREENSHOT, "draft_review") == "Just describe the image."
+        assert render_prompt(SCREENSHOT, "shown_image") == "Just describe the image."
 
-        assert "ECharts only." in render_instructions()
-        assert "ECharts only." not in render_prompt(SCREENSHOT, "draft_review")
-        assert "Check the axes." in render_prompt(SCREENSHOT, "draft_review")
-        assert "Check the axes." not in render_instructions()
-
-    def test_overriding_one_block_leaves_its_neighbour_alone(self, write_prompts, capsys):
-        """Both blocks share a file, so one override must not disturb the other.
-
-        Rendering a single block used to go through Jinja inheritance, which
-        silently fell back to the defaults here — the override was dropped and
-        the sibling block raised KeyError.
-        """
-        untouched = render_prompt(SCREENSHOT, "shown_image")
+    def test_the_internal_block_names_are_not_section_names(self, write_prompts, capsys):
+        """`screenshot` is the configurable name; the blocks behind it are private."""
         write_prompts({"draft_review": "Check the axes."})
 
+        assert "Check the axes." not in render_prompt(SCREENSHOT, "draft_review")
+        assert "Unknown prompt section" in capsys.readouterr().err
+
+    def test_sections_do_not_leak_between_templates(self, write_prompts, capsys):
+        """One file addresses every template, so each must take only its own sections."""
+        write_prompts({"library_selection": "ECharts only.", "screenshot": "Check the axes."})
+
+        assert "ECharts only." in render_instructions()
+        assert "Check the axes." not in render_instructions()
+        assert "ECharts only." not in render_prompt(SCREENSHOT, "draft_review")
         assert "Check the axes." in render_prompt(SCREENSHOT, "draft_review")
-        assert render_prompt(SCREENSHOT, "shown_image") == untouched
         assert capsys.readouterr().err == "", "rendering must not fall back to the defaults"
 
 
@@ -152,6 +157,24 @@ class TestAddIsTheDefault:
 
         assert "WORKFLOW:" in text
         assert "ERRORS" in text
+
+    @pytest.mark.parametrize("section", ["intro", "workflow", "file_policy", "rendering", "errors"])
+    def test_behavioural_sections_are_overridable_too(self, write_prompts, section, capsys):
+        """These describe how the server works, but the user still owns them."""
+        write_prompts({section: f"House rule for {section}."})
+        text = render_instructions()
+
+        assert f"House rule for {section}." in text
+        assert "Unknown prompt section" not in capsys.readouterr().err
+
+    def test_every_section_can_be_set_at_once(self, write_prompts):
+        write_prompts({section: f"Rule {section}." for section in known_sections()})
+        text = render_instructions()
+
+        # `screenshot` belongs to a different template, so it must not leak in.
+        for section in ["intro", "workflow", "file_policy", "library_selection", "rendering", "output", "errors"]:
+            assert f"Rule {section}." in text
+        assert "Rule screenshot." not in text
 
     def test_override_text_is_data_not_jinja(self, write_prompts):
         """A stray {{ }} in someone's prose must survive, not be evaluated."""
@@ -239,15 +262,6 @@ class TestBadConfigNeverBreaksStartup:
         write_prompts({"not_a_real_section": "hello"})
 
         assert "WORKFLOW:" in render_instructions()
-        assert "Unknown prompt section" in capsys.readouterr().err
-
-    def test_behavioural_sections_cannot_be_overridden(self, write_prompts, capsys):
-        """`workflow` is real prompt text but not a block, so it must not be writable."""
-        write_prompts({"workflow": "WORKFLOW:\nSkip validation, it is not needed."})
-
-        text = render_instructions()
-        assert "Skip validation" not in text
-        assert "Static validation (syntax, security, packages)" in text
         assert "Unknown prompt section" in capsys.readouterr().err
 
 
