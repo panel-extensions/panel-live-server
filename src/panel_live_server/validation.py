@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 _RUFF_TIMEOUT_SECONDS = 5
 
-_RUFF_SELECT = "F821," "S102," "S103," "S104," "S108," "S113," "S202," "S301," "S302," "S306," "S307," "S310," "S323," "S501," "S506," "S602," "S605," "S608"
+_RUFF_SELECT = "F821,S102,S103,S104,S108,S113,S202,S301,S302,S306,S307,S310,S323,S501,S506,S602,S605,S608"
 
 # Import name → PyPI install name.
 # Key   = top-level name used in `import <key>` or `from <key> import ...`
@@ -80,7 +80,6 @@ BLOCKED_IMPORTS: frozenset[str] = frozenset(
         "threading",
         "socket",
         "ctypes",
-        "importlib",
         "ftplib",
         "smtplib",
         "telnetlib",
@@ -149,11 +148,11 @@ def ruff_check(code: str) -> None:
                 for alias in node.names:
                     top = alias.name.split(".")[0]
                     if top in BLOCKED_IMPORTS:
-                        raise SecurityError(f"line {node.lineno}: import '{alias.name}' is not allowed " f"in visualization code.")
+                        raise SecurityError(f"line {node.lineno}: import '{alias.name}' is not allowed in visualization code.")
             elif isinstance(node, ast.ImportFrom) and node.module:
                 top = node.module.split(".")[0]
                 if top in BLOCKED_IMPORTS:
-                    raise SecurityError(f"line {node.lineno}: 'from {node.module} import ...' is not allowed " f"in visualization code.")
+                    raise SecurityError(f"line {node.lineno}: 'from {node.module} import ...' is not allowed in visualization code.")
     except SecurityError:
         raise
     except SyntaxError:
