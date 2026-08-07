@@ -722,30 +722,15 @@ async def screenshot(
     ════════════════════════════════════════════════════════════════════════
     TALL DASHBOARDS AND MULTIPAGE DASHBOARDS:
     ════════════════════════════════════════════════════════════════════════
-    Both are captured automatically — you do not need to ask.
+    Both captured automatically, no need to ask: `full_page` (scrolling
+    content, including a template's main area) and `page` (every page of a
+    tabbed dashboard, or hand-built nav via RadioButtonGroup/RadioBoxGroup/
+    Select) default to capturing everything. NOT covered: Button.on_click or
+    URL-based navigation.
 
-    · Scrolling content: `full_page` defaults to True, which also captures what
-      scrolls inside a template's main area, not just what scrolls the window.
-    · A dashboard with tabs/pages: `page` defaults to `"all"`, so every page
-      comes back as its own labeled image in one call. This covers `pn.Tabs`
-      AND hand-built page routing through a `RadioButtonGroup`/`RadioBoxGroup`/
-      `Select` bound to swap content (a very common way to build a "multipage"
-      Panel app without `Tabs`) — detected by clicking through the widget's
-      options and checking whether the content actually changes, so an
-      ordinary filter or theme toggle is not mistaken for page navigation.
-
-    NOT covered, and not detectable safely: page switching driven by a
-    `Button`'s `on_click` (Button exists for arbitrary actions — submit,
-    delete — so clicking every button to check "is this navigation" is not
-    something this tool does), or by URL/`pn.state.location` routing.
-
-    Set `full_page=False` for a viewport-only capture, or `page="Sales"` /
-    `page="2"` / `page=""` to capture one specific page instead of all of them
-    — only when you deliberately want less than everything (e.g. cheaper, or
-    you only care about one page). If a capture still could not fit every page
-    (a dashboard with more pages than the cap allows), the ones you did not get
-    are named in the text beside the image — ask for those explicitly before
-    concluding something is missing.
+    Pass `full_page=False` or `page="Sales"`/`page="2"`/`page=""` for less
+    than everything. Pages that didn't fit the cap are named beside the image
+    — ask for those explicitly rather than assuming something is missing.
 
     WHEN TO USE — a follow-up question about an already-shown visualization that
     can only be answered by seeing it (random/dynamic data, or visual position):
