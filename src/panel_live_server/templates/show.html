@@ -617,8 +617,37 @@
 
       let currentUrl = "";
       let currentCode = "";
+      let currentSnippetId = "";
       let renderToken = 0;
       let loadTimer = null;
+
+      /* The payload no longer carries the code (issue #58) — it was the largest
+         field in a message the model re-reads in full, spent on a panel the user
+         opens rarely. Derive the API URL from the view URL so this keeps working
+         behind a Codespaces or JupyterHub proxy, where the origin and path prefix
+         are not localhost. */
+      function codeEndpointFor(url, id) {
+        if (!url || !id) return "";
+        try {
+          const u = new URL(url);
+          const base = u.pathname.replace(/\/view\/?$/, "");
+          return `${u.origin}${base}/api/snippet?id=${encodeURIComponent(id)}`;
+        } catch {
+          return "";
+        }
+      }
+
+      async function loadCode() {
+        if (currentCode) return currentCode;
+        const endpoint = codeEndpointFor(currentUrl, currentSnippetId);
+        if (!endpoint) throw new Error("No snippet to fetch.");
+        const response = await fetch(endpoint);
+        if (!response.ok) throw new Error(`Server returned ${response.status}`);
+        const body = await response.json();
+        if (typeof body.code !== "string") throw new Error("Response contained no code.");
+        currentCode = body.code;
+        return currentCode;
+      }
 
       function hideSpinner() {
         clearTimeout(loadTimer);
@@ -761,7 +790,13 @@
       });
 
       copyCodeButton.addEventListener("click", async () => {
-        const ok = await copyToClipboard(currentCode || "No code available.");
+        let code;
+        try {
+          code = await loadCode();
+        } catch {
+          return;
+        }
+        const ok = await copyToClipboard(code);
         if (ok) flashCopied(copyCodeButton);
       });
 
@@ -784,13 +819,31 @@
       // The live iframe is hidden with visibility (not display) while the code is
       // up: display:none would collapse it to zero size and Bokeh would repaint
       // the plot at the wrong dimensions when the user switches back.
-      function openCodeView() {
-        if (!currentCode) return;
-        renderCode(currentCode);
+      async function openCodeView() {
+        if (!currentSnippetId) return;
         codePanel.classList.add("visible");
         viewCodeButton.classList.add("active");
         viewCodeButton.setAttribute("aria-expanded", "true");
         iframe.style.visibility = "hidden";
+
+        if (currentCode) {
+          renderCode(currentCode);
+          return;
+        }
+
+        // Fetched on open rather than shipped in the payload, so say so while it
+        // is in flight and say so plainly if it cannot be reached — a silently
+        // empty panel would look like the snippet had no code.
+        codePanelBody.textContent = "Loading code…";
+        const token = ++renderToken;
+        try {
+          const code = await loadCode();
+          if (token !== renderToken) return;   // a newer tool result arrived
+          renderCode(code);
+        } catch (err) {
+          if (token !== renderToken) return;
+          codePanelBody.textContent = `Could not load the code: ${err.message}`;
+        }
       }
 
       function closeCodeView() {
@@ -913,15 +966,20 @@
 
           messageEl.classList.add(`status-${status}`);
           currentUrl = typeof parsedPayload.url === "string" ? parsedPayload.url : "";
-          currentCode = typeof parsedPayload.code === "string" ? parsedPayload.code : "";
+          // Each result is a different snippet, so drop any code cached for the last one.
+          currentSnippetId = typeof parsedPayload.id === "string" ? parsedPayload.id : "";
+          currentCode = "";
+          renderToken++;
 
           // Update tab title with visualization name if available
           if (parsedPayload.name) {
             document.title = `Panel Live Server · ${parsedPayload.name}`;
           }
 
-          // Enable action buttons now that we have a result
-          viewCodeButton.disabled = !currentCode;
+          // Enable action buttons now that we have a result. The code panel is
+          // available whenever there is a snippet to fetch, not only when the
+          // payload happened to carry the code.
+          viewCodeButton.disabled = !currentSnippetId || !currentUrl;
           shareUrlButton.disabled = !currentUrl;
           openBrowserButton.disabled = !currentUrl;
 
@@ -945,6 +1003,8 @@
           const match = rawText.match(urlRegex);
           currentUrl = match ? match[1] : "";
           currentCode = "";
+          currentSnippetId = "";
+          renderToken++;
         }
 
         const isPanelServer = parsedPayload && parsedPayload.panel_server === true;
