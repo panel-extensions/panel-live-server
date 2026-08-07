@@ -175,7 +175,7 @@ class ScreenshotEndpoint(RequestHandler):
             width=self.get_argument("width", ""),
             height=self.get_argument("height", ""),
             full_page=self.get_argument("full_page", "true"),
-            page=self.get_argument("page", ""),
+            page=self.get_argument("page", "all"),
         )
 
     async def post(self):
@@ -218,7 +218,7 @@ class ScreenshotEndpoint(RequestHandler):
                 width=str(body.get("width", "")),
                 height=str(body.get("height", "")),
                 full_page=str(body.get("full_page", True)),
-                page=str(body.get("page", "")),
+                page=str(body.get("page", "all")),
             )
         finally:
             db.delete_snippet(snippet.id)

@@ -144,7 +144,7 @@ class DisplayClient:
         width: int | None = None,
         height: int | None = None,
         full_page: bool = True,
-        page: str = "",
+        page: str = "all",
     ) -> ScreenshotResult:
         """Fetch a screenshot of a snippet's rendered ``/view`` page.
 
@@ -171,7 +171,7 @@ class DisplayClient:
         width: int | None = None,
         height: int | None = None,
         full_page: bool = True,
-        page: str = "",
+        page: str = "all",
     ) -> ScreenshotResult:
         """Render *code* and return a screenshot of it without keeping the snippet.
 

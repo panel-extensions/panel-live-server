@@ -655,7 +655,7 @@ async def screenshot(
     width: int = 1200,
     height: int = 800,
     full_page: bool = True,
-    page: str = "",
+    page: str = "all",
     ctx: Context | None = None,
 ) -> ToolResult:
     """See a visualization as a PNG — returns the image to you (the LLM), not to the user.
@@ -722,17 +722,30 @@ async def screenshot(
     ════════════════════════════════════════════════════════════════════════
     TALL DASHBOARDS AND MULTIPAGE DASHBOARDS:
     ════════════════════════════════════════════════════════════════════════
-    Scrolling content is captured automatically — `full_page` defaults to True,
-    which also captures what scrolls inside a template's main area, not just
-    what scrolls the window. Only set `full_page=False` if you specifically want
-    a viewport-sized capture (cheaper, smaller image).
+    Both are captured automatically — you do not need to ask.
 
-    A dashboard with tabs/pages still shows only whichever page is on screen —
-    that part is NOT automatic. Pass `page="all"` for every page in one call, or
-    `page="Sales"` (a tab label) or `page="2"` (0-based) for one of them. When a
-    capture finds pages you did not ask for, their names come back in the text
-    beside the image — ask for them before concluding that something is
-    missing.
+    · Scrolling content: `full_page` defaults to True, which also captures what
+      scrolls inside a template's main area, not just what scrolls the window.
+    · A dashboard with tabs/pages: `page` defaults to `"all"`, so every page
+      comes back as its own labeled image in one call. This covers `pn.Tabs`
+      AND hand-built page routing through a `RadioButtonGroup`/`RadioBoxGroup`/
+      `Select` bound to swap content (a very common way to build a "multipage"
+      Panel app without `Tabs`) — detected by clicking through the widget's
+      options and checking whether the content actually changes, so an
+      ordinary filter or theme toggle is not mistaken for page navigation.
+
+    NOT covered, and not detectable safely: page switching driven by a
+    `Button`'s `on_click` (Button exists for arbitrary actions — submit,
+    delete — so clicking every button to check "is this navigation" is not
+    something this tool does), or by URL/`pn.state.location` routing.
+
+    Set `full_page=False` for a viewport-only capture, or `page="Sales"` /
+    `page="2"` / `page=""` to capture one specific page instead of all of them
+    — only when you deliberately want less than everything (e.g. cheaper, or
+    you only care about one page). If a capture still could not fit every page
+    (a dashboard with more pages than the cap allows), the ones you did not get
+    are named in the text beside the image — ask for those explicitly before
+    concluding something is missing.
 
     WHEN TO USE — a follow-up question about an already-shown visualization that
     can only be answered by seeing it (random/dynamic data, or visual position):
@@ -768,15 +781,16 @@ async def screenshot(
     full_page : bool, default True
         Capture everything the page can scroll to, not just the viewport. Set
         False for a viewport-only capture (cheaper, smaller image).
-    page : str, optional
-        Which page of a multipage dashboard to capture: unset for whichever is
-        showing, ``"all"`` for every one, or a tab label or 0-based index.
+    page : str, default "all"
+        Which page of a multipage dashboard to capture: ``"all"`` (default)
+        captures every page, a tab label or 0-based index captures one, and
+        ``""`` captures only whichever page is currently showing.
 
     Returns
     -------
     Image
-        PNG screenshot of the rendered visualization — one per page when
-        ``page="all"``.
+        PNG screenshot of the rendered visualization — one per page for a
+        multipage dashboard.
     """
     if not snippet_id and not code:
         raise ToolError("Pass code=... to screenshot a draft, or snippet_id=... to screenshot a visualization show() already returned.")

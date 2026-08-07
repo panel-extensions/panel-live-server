@@ -374,20 +374,21 @@ class TestScreenshotDrafts:
             properties = tool.inputSchema["properties"]
             assert "full_page" in properties
             assert "page" in properties
-            # Scrolling content is invisible unless captured, so this must not be
-            # something the caller has to remember to opt into.
+            # Scrolling content and other pages are invisible unless captured, so
+            # neither must be something the caller has to remember to opt into.
             assert properties["full_page"].get("default") is True
+            assert properties["page"].get("default") == "all"
 
     @pytest.mark.asyncio
-    async def test_omitting_full_page_still_captures_the_whole_page(self):
-        """The default must reach the client as True, not just the schema default."""
+    async def test_omitting_full_page_and_page_still_captures_everything(self):
+        """The defaults must reach the client as (True, 'all'), not just sit in the schema."""
         server_module._validation_cache.clear()
         capture = Capture(pages=[("", b"\x89PNG")])
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})) as shot:
                 await client.call_tool("screenshot", {"code": "1 + 1"})
 
-        assert shot.call_args.args[-2:] == (True, "")
+        assert shot.call_args.args[-2:] == (True, "all")
 
     @pytest.mark.asyncio
     async def test_full_page_and_page_reach_the_client(self):

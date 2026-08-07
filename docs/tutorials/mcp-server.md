@@ -34,8 +34,8 @@ You should see three tools in the response:
 - `show`: validates the code, renders the visualization, and returns a live URL
 - `screenshot`: takes a picture of a visualization for the AI to look at — either a draft it
   has not shown you yet, so it can check its own work first, or one you already have, so it can
-  answer questions about how it looks. It can capture a whole scrolling dashboard
-  (`full_page=True`) and each page of a tabbed one (`page="all"`), not just the first screenful
+  answer questions about how it looks. It captures a whole scrolling dashboard and every page of
+  a tabbed one automatically, not just the first screenful
 - `evaluate`: runs code and hands back its text output — what it printed and the value of its
   last line. No browser, no picture. This is how the AI checks a fact ("does this option
   exist?", "what columns does that have?") without rendering anything
