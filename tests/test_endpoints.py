@@ -10,6 +10,7 @@ from tornado.testing import AsyncHTTPTestCase
 from tornado.web import Application
 
 import panel_live_server.endpoints as endpoints_module
+import panel_live_server.screenshot as screenshot_module
 from panel_live_server.database import SnippetDatabase
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import ScreenshotEndpoint
@@ -214,9 +215,9 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
 
         async def fake_capture(url, **kwargs):
             captured["url"] = url
-            return b"\x89PNG-bytes"
+            return screenshot_module.Capture(pages=[("", b"\x89PNG-bytes")])
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self._post({"code": "1 + 1", "method": "inline"})
 
         assert response.code == 200
@@ -232,7 +233,7 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
         async def boom(url, **kwargs):
             raise RuntimeError("browser exploded")
 
-        with patch("panel_live_server.screenshot.capture_png", boom):
+        with patch("panel_live_server.screenshot.capture_pages", boom):
             response = self._post({"code": "1 + 1"})
 
         assert response.code == 500
@@ -298,11 +299,11 @@ class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
         async def fake_capture(url, **kwargs):
             # Mid-capture the row must exist — the browser has to have a page to load.
             seen_ids.append([s.id for s in self.db.list_snippets()])
-            return b"\x89PNG"
+            return screenshot_module.Capture(pages=[("", b"\x89PNG")])
 
         assert self.db.list_snippets() == []
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self.fetch(
                 "/api/screenshot",
                 method="POST",

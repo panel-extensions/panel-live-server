@@ -13,6 +13,7 @@ import signal
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -33,6 +34,7 @@ from panel_live_server.manager import PanelServerManager
 from panel_live_server.prompts import SCREENSHOT
 from panel_live_server.prompts import render_instructions
 from panel_live_server.prompts import render_prompt
+from panel_live_server.screenshot import Capture
 from panel_live_server.screenshot import is_browser_installed
 from panel_live_server.utils import ExtensionError
 from panel_live_server.utils import validate_extension_availability
@@ -652,6 +654,8 @@ async def screenshot(
     method: Literal["inline", "server"] = "inline",
     width: int = 1200,
     height: int = 800,
+    full_page: bool = True,
+    page: str = "",
     ctx: Context | None = None,
 ) -> ToolResult:
     """See a visualization as a PNG — returns the image to you (the LLM), not to the user.
@@ -715,6 +719,21 @@ async def screenshot(
     If the image is fine, always prefer it over recomputing (see CRITICAL RULE
     above — rendered output and raw data frequently disagree).
 
+    ════════════════════════════════════════════════════════════════════════
+    TALL DASHBOARDS AND MULTIPAGE DASHBOARDS:
+    ════════════════════════════════════════════════════════════════════════
+    Scrolling content is captured automatically — `full_page` defaults to True,
+    which also captures what scrolls inside a template's main area, not just
+    what scrolls the window. Only set `full_page=False` if you specifically want
+    a viewport-sized capture (cheaper, smaller image).
+
+    A dashboard with tabs/pages still shows only whichever page is on screen —
+    that part is NOT automatic. Pass `page="all"` for every page in one call, or
+    `page="Sales"` (a tab label) or `page="2"` (0-based) for one of them. When a
+    capture finds pages you did not ask for, their names come back in the text
+    beside the image — ask for them before concluding that something is
+    missing.
+
     WHEN TO USE — a follow-up question about an already-shown visualization that
     can only be answered by seeing it (random/dynamic data, or visual position):
         · wave/line chart  → "where does it peak?", "where is the lowest dip?"
@@ -746,11 +765,18 @@ async def screenshot(
         Browser viewport width in pixels.
     height : int, default 800
         Browser viewport height in pixels.
+    full_page : bool, default True
+        Capture everything the page can scroll to, not just the viewport. Set
+        False for a viewport-only capture (cheaper, smaller image).
+    page : str, optional
+        Which page of a multipage dashboard to capture: unset for whichever is
+        showing, ``"all"`` for every one, or a tab label or 0-based index.
 
     Returns
     -------
     Image
-        PNG screenshot of the rendered visualization.
+        PNG screenshot of the rendered visualization — one per page when
+        ``page="all"``.
     """
     if not snippet_id and not code:
         raise ToolError("Pass code=... to screenshot a draft, or snippet_id=... to screenshot a visualization show() already returned.")
@@ -765,7 +791,7 @@ async def screenshot(
         if not validation["valid"]:
             return _draft_failure(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
-        png, error, captured = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height)
+        capture, error, captured = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height, full_page, page)
         if error and error.startswith(BROWSER_UNAVAILABLE_PREFIX):
             # No amount of rewriting fixes a missing browser — surface it instead of looping.
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
@@ -775,15 +801,21 @@ async def screenshot(
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.
-        png, error, captured = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
+        capture, error, captured = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height, full_page, page)
         if error:
             raise ToolError(f"Screenshot failed: {error}")
         reminder = render_prompt(SCREENSHOT, "shown_image")
 
-    if not png:
+    if not capture or not capture.pages:
         raise ToolError("Screenshot capture returned no image data.")
 
-    content = [Image(data=png, format="png").to_image_content()]
+    content: list[Any] = []
+    for label, png in capture.pages:
+        # Label each image when there is more than one, so the pages of a
+        # dashboard do not arrive as an unattributed pile of pictures.
+        if label and len(capture.pages) > 1:
+            content.append(TextContent(type="text", text=f"--- page: {label} ---"))
+        content.append(Image(data=png, format="png").to_image_content())
 
     # Anything the snippet printed, and anything the browser logged, comes back
     # as text so it can be read directly rather than rendered into the picture
@@ -792,5 +824,22 @@ async def screenshot(
     if output:
         content.append(TextContent(type="text", text=f"--- output ---\n{output}"))
 
+    if uncaptured := _uncaptured_pages(capture):
+        content.append(TextContent(type="text", text=uncaptured))
+
     content.append(TextContent(type="text", text=reminder))
     return ToolResult(content=content)
+
+
+def _uncaptured_pages(capture: Capture) -> str:
+    """Name the pages this capture did not return, if any.
+
+    A tabbed dashboard shows one page at a time, so the other pages are absent
+    from the image in exactly the way an empty chart is — silently. Saying they
+    exist is what stops an agent reporting on a third of a dashboard.
+    """
+    shown = {label for label, _ in capture.pages}
+    missing = [label for label in capture.available if label not in shown]
+    if not missing:
+        return ""
+    return f"This dashboard has {len(capture.available)} pages; you have not seen: {', '.join(missing)}. Call screenshot(page='<name>') or page='all' to see them."

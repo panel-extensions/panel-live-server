@@ -4,8 +4,11 @@
 · Look at the image. Blank, empty, or just a bare axes/frame with nothing plotted? That means the code ran but rendered nothing (e.g. a matplotlib script ending in `plt.show()` instead of the figure) — fix the code so it actually produces output, then call `screenshot(code=...)` again. Do not say it looks good without seeing content.
 · Wrong, ugly, cluttered, or missing something? → fix the code and call `screenshot(code=...)` again.
 · Looks right AND shows real content? → call `show(code=...)` once with the final code to hand it to the user.
+· Still cut off at the bottom despite the full-page capture? The content exceeded the height ceiling — say so rather than describing it as complete.
+· Has tabs/pages and you only see one? → call again with `page="all"` before judging it; the other pages are invisible here, not absent.
 Do not describe this draft or its problems to the user; just iterate until it is right.{% endblock %}
 {% block shown_image %}IMAGE QUALITY CHECK — before answering:
 · Blurry, pixelated, or clipped? → answer from the code/data instead.
 · Text/labels too small to read confidently? → answer from the code/data instead.
-· Image is clear and complete? → answer from THIS image only. Do NOT recompute from raw data — rendered output and raw data frequently disagree (row order, axis inversion, sorting, binning).{% endblock %}
+· Image is clear and complete? → answer from THIS image only. Do NOT recompute from raw data — rendered output and raw data frequently disagree (row order, axis inversion, sorting, binning).
+· Question about the whole dashboard, or an element you cannot find? → it may be on another page. Re-capture with `page="all"` if pages were listed, before answering "there is no such thing".{% endblock %}

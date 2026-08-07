@@ -4,6 +4,7 @@ This module implements Tornado RequestHandler classes that provide
 HTTP endpoints for creating visualizations and checking server health.
 """
 
+import base64
 import contextlib
 import io
 import json
@@ -140,7 +141,16 @@ class ScreenshotEndpoint(RequestHandler):
     width, height : int
         Viewport size in px (default from config).
     full_page : bool
-        Capture the full scrollable page rather than just the viewport.
+        Capture the full scrollable page rather than just the viewport. Defaults
+        to true; pass ``full_page=false`` for a viewport-only capture.
+    page : str
+        Which page of a multipage dashboard to capture: unset for whichever is
+        showing, ``all`` for every one, or a tab label or 0-based index.
+
+    A single capture comes back as ``image/png``, with the labels of every page
+    the dashboard has in the ``X-PLS-Pages`` header. ``page=all`` comes back as
+    JSON instead, one base64 PNG per page, because there is no honest way to put
+    several images in one image body.
     """
 
     def _error(self, status: int, message: str, error: str | None = None) -> None:
@@ -164,7 +174,8 @@ class ScreenshotEndpoint(RequestHandler):
             snippet_id,
             width=self.get_argument("width", ""),
             height=self.get_argument("height", ""),
-            full_page=self.get_argument("full_page", "false"),
+            full_page=self.get_argument("full_page", "true"),
+            page=self.get_argument("page", ""),
         )
 
     async def post(self):
@@ -206,12 +217,13 @@ class ScreenshotEndpoint(RequestHandler):
                 snippet.id,
                 width=str(body.get("width", "")),
                 height=str(body.get("height", "")),
-                full_page=str(body.get("full_page", False)),
+                full_page=str(body.get("full_page", True)),
+                page=str(body.get("page", "")),
             )
         finally:
             db.delete_snippet(snippet.id)
 
-    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str) -> None:
+    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str, page: str = "") -> None:
         """Screenshot ``/view?id=<snippet_id>`` and write the PNG to the response."""
         config = get_config()
         try:
@@ -225,19 +237,26 @@ class ScreenshotEndpoint(RequestHandler):
 
         console_lines: list[str] = []
         try:
-            png = await screenshot.capture_png(
+            capture = await screenshot.capture_pages(
                 view_url,
                 width=viewport_width,
                 height=viewport_height,
                 full_page=full_page.lower() in ("1", "true", "yes"),
                 settle_ms=config.screenshot_settle_ms,
                 timeout_ms=config.screenshot_timeout_ms,
+                select=page,
+                max_height=config.screenshot_max_height,
+                max_pages=config.screenshot_max_pages,
                 console_sink=console_lines,
             )
         except screenshot.PlaywrightUnavailableError as e:
             self.set_status(503)
             self.set_header("Content-Type", "application/json")
             self.write({"error": "PlaywrightUnavailable", "message": str(e)})
+            return
+        except ValueError as e:
+            # An unknown page name — the caller can fix that, so say which exist.
+            self._error(400, str(e), error="ValueError")
             return
         except Exception as e:
             logger.exception(f"Error capturing screenshot for snippet {snippet_id}")
@@ -251,10 +270,18 @@ class ScreenshotEndpoint(RequestHandler):
         payload = diagnostics.build(diagnostics.pop(snippet_id), console_lines)
 
         self.set_status(200)
-        self.set_header("Content-Type", "image/png")
         if payload:
             self.set_header(diagnostics.HEADER, diagnostics.encode(payload))
-        self.write(png)
+        if capture.available:
+            self.set_header(screenshot.PAGES_HEADER, screenshot.encode_pages(capture.available))
+
+        if len(capture.pages) > 1:
+            self.set_header("Content-Type", "application/json")
+            self.write({"pages": [{"label": label, "png": base64.b64encode(png).decode("ascii")} for label, png in capture.pages]})
+            return
+
+        self.set_header("Content-Type", "image/png")
+        self.write(capture.png or b"")
 
 
 class EvaluateEndpoint(RequestHandler):

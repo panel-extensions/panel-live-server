@@ -13,6 +13,7 @@ from panel_live_server.cli import app
 from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
 from panel_live_server.config import get_config
 from panel_live_server.config import reset_config
+from panel_live_server.screenshot import Capture
 from panel_live_server.server import mcp
 from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ValidationError
@@ -355,7 +356,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         async with Client(mcp) as client:
             with (
-                patch.object(server_module._client, "screenshot_code", return_value=(b"\x89PNG", None, {})) as capture,
+                patch.object(server_module._client, "screenshot_code", return_value=(Capture(pages=[("", b"\x89PNG")]), None, {})) as capture,
                 patch.object(server_module._client, "create_snippet") as create,
             ):
                 result = await client.call_tool("screenshot", {"code": "1 + 1", "name": "Draft"})
@@ -364,6 +365,78 @@ class TestScreenshotDrafts:
         assert not create.called
         assert result.content[0].type == "image"
         assert "REVIEW THIS DRAFT" in result.content[-1].text
+
+    @pytest.mark.asyncio
+    async def test_screenshot_advertises_full_page_and_page(self):
+        """Neither a tall dashboard nor a tabbed one is reachable unless the schema offers these."""
+        async with Client(mcp) as client:
+            tool = next(t for t in await client.list_tools() if t.name == "screenshot")
+            properties = tool.inputSchema["properties"]
+            assert "full_page" in properties
+            assert "page" in properties
+            # Scrolling content is invisible unless captured, so this must not be
+            # something the caller has to remember to opt into.
+            assert properties["full_page"].get("default") is True
+
+    @pytest.mark.asyncio
+    async def test_omitting_full_page_still_captures_the_whole_page(self):
+        """The default must reach the client as True, not just the schema default."""
+        server_module._validation_cache.clear()
+        capture = Capture(pages=[("", b"\x89PNG")])
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})) as shot:
+                await client.call_tool("screenshot", {"code": "1 + 1"})
+
+        assert shot.call_args.args[-2:] == (True, "")
+
+    @pytest.mark.asyncio
+    async def test_full_page_and_page_reach_the_client(self):
+        """A parameter the tool accepts but never forwards is worse than none at all."""
+        server_module._validation_cache.clear()
+        capture = Capture(pages=[("", b"\x89PNG")])
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})) as shot:
+                await client.call_tool("screenshot", {"code": "1 + 1", "full_page": True, "page": "Sales"})
+
+        assert shot.call_args.args[-2:] == (True, "Sales")
+
+    @pytest.mark.asyncio
+    async def test_every_page_of_a_multipage_dashboard_comes_back_labelled(self):
+        """An unattributed pile of pictures is not an answer about a dashboard."""
+        server_module._validation_cache.clear()
+        capture = Capture(pages=[("Sales", b"\x89A"), ("Costs", b"\x89B")], available=["Sales", "Costs"])
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+                result = await client.call_tool("screenshot", {"code": "1 + 1", "page": "all"})
+
+        assert [block.type for block in result.content[:4]] == ["text", "image", "text", "image"]
+        assert "page: Sales" in result.content[0].text
+        assert "page: Costs" in result.content[2].text
+
+    @pytest.mark.asyncio
+    async def test_uncaptured_pages_are_named_beside_the_image(self):
+        """A page not captured is absent from the picture exactly as an empty chart is."""
+        server_module._validation_cache.clear()
+        capture = Capture(pages=[("Sales", b"\x89A")], available=["Sales", "Costs", "Forecast"])
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+                result = await client.call_tool("screenshot", {"code": "1 + 1"})
+
+        text = " ".join(block.text for block in result.content if block.type == "text")
+        assert "Costs" in text and "Forecast" in text
+        assert "Sales" not in text.split("you have not seen:")[1]
+
+    @pytest.mark.asyncio
+    async def test_single_page_dashboard_says_nothing_about_pages(self):
+        """The hint must not fire for the overwhelmingly common single-page case."""
+        server_module._validation_cache.clear()
+        capture = Capture(pages=[("", b"\x89A")], available=[])
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+                result = await client.call_tool("screenshot", {"code": "1 + 1"})
+
+        text = " ".join(block.text for block in result.content if block.type == "text")
+        assert "you have not seen" not in text
 
     @pytest.mark.asyncio
     async def test_missing_browser_is_reported_not_retried(self):

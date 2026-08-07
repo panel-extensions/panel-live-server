@@ -5,16 +5,22 @@ via its REST API. The client can be used with either a locally-managed subproces
 or a remote server instance.
 """
 
+import base64
 import logging
 
 import requests  # type: ignore[import-untyped]
 
 from panel_live_server import diagnostics
+from panel_live_server import screenshot
 
 logger = logging.getLogger(__name__)
 
 # Marks a screenshot failure caused by the missing headless browser rather than by the code.
 BROWSER_UNAVAILABLE_PREFIX = "PlaywrightUnavailable: "
+
+#: What the screenshot calls hand back: the capture, an error message, and
+#: whatever the render printed or the browser logged.
+ScreenshotResult = tuple[screenshot.Capture | None, str | None, dict[str, str]]
 
 
 class DisplayClient:
@@ -137,17 +143,18 @@ class DisplayClient:
         snippet_id: str,
         width: int | None = None,
         height: int | None = None,
-        full_page: bool = False,
-    ) -> tuple[bytes | None, str | None, dict[str, str]]:
-        """Fetch a PNG screenshot of a snippet's rendered ``/view`` page.
+        full_page: bool = True,
+        page: str = "",
+    ) -> ScreenshotResult:
+        """Fetch a screenshot of a snippet's rendered ``/view`` page.
 
         Returns
         -------
-        tuple[bytes | None, str | None, dict[str, str]]
-            ``(png_bytes, None, diagnostics)`` on success, or
+        ScreenshotResult
+            ``(capture, None, diagnostics)`` on success, or
             ``(None, error_message, {})`` on failure.
         """
-        params: dict[str, str | int] = {"id": snippet_id, "full_page": str(full_page).lower()}
+        params: dict[str, str | int] = {"id": snippet_id, "full_page": str(full_page).lower(), "page": page}
         if width:
             params["width"] = width
         if height:
@@ -163,9 +170,10 @@ class DisplayClient:
         method: str = "inline",
         width: int | None = None,
         height: int | None = None,
-        full_page: bool = False,
-    ) -> tuple[bytes | None, str | None, dict[str, str]]:
-        """Render *code* and return a PNG of it without keeping the snippet.
+        full_page: bool = True,
+        page: str = "",
+    ) -> ScreenshotResult:
+        """Render *code* and return a screenshot of it without keeping the snippet.
 
         Backs the draft path of the MCP ``screenshot`` tool (issue #43): the
         server stores the code only long enough to load it in a browser, so an
@@ -173,8 +181,8 @@ class DisplayClient:
 
         Returns
         -------
-        tuple[bytes | None, str | None, dict[str, str]]
-            ``(png_bytes, None, diagnostics)`` on success, or
+        ScreenshotResult
+            ``(capture, None, diagnostics)`` on success, or
             ``(None, error_message, {})`` on failure.
         """
         payload: dict[str, str | int | bool] = {
@@ -183,6 +191,7 @@ class DisplayClient:
             "description": description,
             "method": method,
             "full_page": full_page,
+            "page": page,
         }
         if width:
             payload["width"] = width
@@ -191,15 +200,19 @@ class DisplayClient:
 
         return self._screenshot_request("POST", "draft", json=payload)
 
-    def _screenshot_request(self, verb: str, label: str, **kwargs) -> tuple[bytes | None, str | None, dict[str, str]]:
-        """Call ``/api/screenshot`` and unpack the PNG-or-error response.
+    def _screenshot_request(self, verb: str, label: str, **kwargs) -> ScreenshotResult:
+        """Call ``/api/screenshot`` and unpack the image-or-error response.
+
+        One page comes back as ``image/png``; ``page=all`` comes back as JSON
+        carrying a base64 PNG each. Either way the labels of every page the
+        dashboard has ride along in the ``X-PLS-Pages`` header.
 
         Returns
         -------
-        tuple[bytes | None, str | None, dict[str, str]]
-            ``(png, error, diagnostics)``. The third element holds whatever the
-            render printed and whatever the browser logged; it is ``{}`` when the
-            render was silent or the request failed.
+        ScreenshotResult
+            ``(capture, error, diagnostics)``. The last element holds whatever
+            the render printed and whatever the browser logged; it is ``{}`` when
+            the render was silent or the request failed.
         """
         try:
             response = self.session.request(
@@ -212,8 +225,19 @@ class DisplayClient:
             logger.warning("Screenshot request error for %s: %s", label, e)
             return None, f"Screenshot request failed: {e}", {}
 
-        if response.status_code == 200 and "image/png" in response.headers.get("Content-Type", ""):
-            return response.content, None, diagnostics.decode(response.headers.get(diagnostics.HEADER, ""))
+        if response.status_code == 200:
+            content_type = response.headers.get("Content-Type", "")
+            available = screenshot.decode_pages(response.headers.get(screenshot.PAGES_HEADER, ""))
+            notes = diagnostics.decode(response.headers.get(diagnostics.HEADER, ""))
+            if "image/png" in content_type:
+                return screenshot.Capture(pages=[("", response.content)], available=available), None, notes
+            if "application/json" in content_type:
+                try:
+                    pages = [(p.get("label", ""), base64.b64decode(p["png"])) for p in response.json()["pages"]]
+                except Exception as e:
+                    logger.warning("Malformed multipage screenshot response for %s: %s", label, e)
+                    return None, f"Malformed multipage screenshot response: {e}", {}
+                return screenshot.Capture(pages=pages, available=available), None, notes
 
         try:
             body = response.json()

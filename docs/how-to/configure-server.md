@@ -55,6 +55,23 @@ set PANEL_LIVE_SERVER_DB_PATH=C:\data\my-snippets.db
 set PANEL_LIVE_SERVER_MAX_RESTARTS=5
 ```
 
+### Screenshot capture
+
+The `screenshot` tool has its own settings. The two that bound how much a single capture can
+produce matter most when the AI screenshots a long dashboard or one with many pages:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PANEL_LIVE_SERVER_SCREENSHOT_WIDTH` | `1200` | Viewport width in px |
+| `PANEL_LIVE_SERVER_SCREENSHOT_HEIGHT` | `800` | Viewport height in px |
+| `PANEL_LIVE_SERVER_SCREENSHOT_SETTLE_MS` | `1200` | Pause after content mounts, so Bokeh finishes drawing |
+| `PANEL_LIVE_SERVER_SCREENSHOT_TIMEOUT_MS` | `30000` | Max wait for the page to load |
+| `PANEL_LIVE_SERVER_SCREENSHOT_MAX_HEIGHT` | `10000` | Ceiling in px on how tall a `full_page=True` capture may grow |
+| `PANEL_LIVE_SERVER_SCREENSHOT_MAX_PAGES` | `12` | Max pages a single `page="all"` capture returns |
+
+Raising `MAX_HEIGHT` or `MAX_PAGES` lets the AI see more of a large dashboard in one call, at the
+cost of a larger image (or more of them) landing in its context.
+
 Then start the server, in standalone mode:
 
 ```bash
