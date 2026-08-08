@@ -215,7 +215,7 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
 
         async def fake_capture(url, **kwargs):
             captured["url"] = url
-            return screenshot_module.Capture(pages=[("", b"\x89PNG-bytes")])
+            return screenshot_module.Capture(images=[("", b"\x89PNG-bytes")])
 
         with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self._post({"code": "1 + 1", "method": "inline"})
@@ -273,6 +273,75 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
 
         assert response.code == 404
 
+    def test_the_default_capture_is_one_screen_of_the_current_page(self) -> None:
+        """Capturing everything by default is what floods a caller's context."""
+        seen: dict = {}
+
+        async def fake_capture(url, **kwargs):
+            seen.update(kwargs)
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            self._post({"code": "1 + 1"})
+
+        assert seen["full_page"] is False
+        assert seen["select"] == ""
+
+    def test_naming_a_page_the_dashboard_lacks_is_a_400_listing_the_real_ones(self) -> None:
+        """A fixable mistake, so it must not arrive as a 500 with a traceback."""
+
+        async def fake_capture(url, **kwargs):
+            raise screenshot_module.UnknownPageError("No page named 'Profit'. This dashboard has: Sales, Costs")
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            response = self._post({"code": "1 + 1", "page": "Profit"})
+
+        assert response.code == 400
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["error"] == "UnknownPageError"
+        assert "Sales, Costs" in payload["message"]
+
+    def test_an_ordinary_value_error_is_still_a_500(self) -> None:
+        """Catching bare ValueError here would report our own bugs as the caller's."""
+
+        async def boom(url, **kwargs):
+            raise ValueError("something inside the capture is broken")
+
+        with patch("panel_live_server.screenshot.capture_pages", boom):
+            response = self._post({"code": "1 + 1"})
+
+        assert response.code == 500
+
+    def test_several_images_come_back_as_json_not_one_png(self) -> None:
+        """There is no honest way to put several pictures in one image body."""
+
+        async def fake_capture(url, **kwargs):
+            return screenshot_module.Capture(images=[("screen 1 of 2", b"\x89A"), ("screen 2 of 2", b"\x89B")], total_tiles=2, captured_tiles=2)
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            response = self._post({"code": "1 + 1", "full_page": True})
+
+        assert response.code == 200
+        assert response.headers["Content-Type"].startswith("application/json")
+        assert [i["label"] for i in json.loads(response.body.decode("utf-8"))["images"]] == ["screen 1 of 2", "screen 2 of 2"]
+
+    def test_the_report_rides_along_with_a_single_png(self) -> None:
+        """One image plus 'there are three more pages' is the whole point."""
+
+        async def fake_capture(url, **kwargs):
+            return screenshot_module.Capture(
+                images=[("", b"\x89PNG")], available_pages=["Sales", "Costs"], captured_pages=["Sales"], total_tiles=3, captured_tiles=1
+            )
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            response = self._post({"code": "1 + 1"})
+
+        assert response.headers["Content-Type"] == "image/png"
+        meta = screenshot_module.decode_meta(response.headers[screenshot_module.META_HEADER])
+        assert meta["pages"] == ["Sales", "Costs"]
+        assert meta["captured"] == ["Sales"]
+        assert meta["total_tiles"] == 3
+
 
 class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
     """The real database must be back to where it started once a draft is captured."""
@@ -299,7 +368,7 @@ class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
         async def fake_capture(url, **kwargs):
             # Mid-capture the row must exist — the browser has to have a page to load.
             seen_ids.append([s.id for s in self.db.list_snippets()])
-            return screenshot_module.Capture(pages=[("", b"\x89PNG")])
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
 
         assert self.db.list_snippets() == []
 

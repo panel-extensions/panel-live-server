@@ -143,8 +143,8 @@ class DisplayClient:
         snippet_id: str,
         width: int | None = None,
         height: int | None = None,
-        full_page: bool = True,
-        page: str = "all",
+        full_page: bool = False,
+        page: str = "",
     ) -> ScreenshotResult:
         """Fetch a screenshot of a snippet's rendered ``/view`` page.
 
@@ -170,8 +170,8 @@ class DisplayClient:
         method: str = "inline",
         width: int | None = None,
         height: int | None = None,
-        full_page: bool = True,
-        page: str = "all",
+        full_page: bool = False,
+        page: str = "",
     ) -> ScreenshotResult:
         """Render *code* and return a screenshot of it without keeping the snippet.
 
@@ -203,9 +203,10 @@ class DisplayClient:
     def _screenshot_request(self, verb: str, label: str, **kwargs) -> ScreenshotResult:
         """Call ``/api/screenshot`` and unpack the image-or-error response.
 
-        One page comes back as ``image/png``; ``page=all`` comes back as JSON
-        carrying a base64 PNG each. Either way the labels of every page the
-        dashboard has ride along in the ``X-PLS-Pages`` header.
+        One image comes back as ``image/png``; several — tiles of a tall page,
+        or pages of a dashboard — come back as JSON carrying a base64 PNG each.
+        Either way the report of what was *not* captured rides along in the
+        ``X-PLS-Capture`` header.
 
         Returns
         -------
@@ -227,17 +228,18 @@ class DisplayClient:
 
         if response.status_code == 200:
             content_type = response.headers.get("Content-Type", "")
-            available = screenshot.decode_pages(response.headers.get(screenshot.PAGES_HEADER, ""))
+            meta = screenshot.decode_meta(response.headers.get(screenshot.META_HEADER, ""))
             notes = diagnostics.decode(response.headers.get(diagnostics.HEADER, ""))
             if "image/png" in content_type:
-                return screenshot.Capture(pages=[("", response.content)], available=available), None, notes
+                capture = screenshot.Capture(images=[("", response.content)])
+                return screenshot.apply_meta(capture, meta), None, notes
             if "application/json" in content_type:
                 try:
-                    pages = [(p.get("label", ""), base64.b64decode(p["png"])) for p in response.json()["pages"]]
+                    images = [(i.get("label", ""), base64.b64decode(i["png"])) for i in response.json()["images"]]
                 except Exception as e:
-                    logger.warning("Malformed multipage screenshot response for %s: %s", label, e)
-                    return None, f"Malformed multipage screenshot response: {e}", {}
-                return screenshot.Capture(pages=pages, available=available), None, notes
+                    logger.warning("Malformed multi-image screenshot response for %s: %s", label, e)
+                    return None, f"Malformed multi-image screenshot response: {e}", {}
+                return screenshot.apply_meta(screenshot.Capture(images=images), meta), None, notes
 
         try:
             body = response.json()

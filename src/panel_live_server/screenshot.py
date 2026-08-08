@@ -5,6 +5,19 @@ MCP ``screenshot`` tool can hand an LLM a picture of the *rendered* output —
 the actual layout, fonts, and margins as a user would see them, not just the
 source code.
 
+A dashboard is often taller than the browser window, and often has tabs. Both
+are invisible in a picture: a page cut in half looks exactly like a page that
+ends, and a tab you did not open is absent in the same silent way an empty
+chart is. So every capture also *reports* what it did not show — the tab
+labels it found, and whether content continues past the fold (see
+:class:`Capture`). Both facts are read off the loaded page for the cost of two
+locator calls; neither clicks anything, and neither costs an extra image.
+
+Acting on that report is the caller's choice, never this module's. Only the
+caller knows the question being asked — "is the top chart blue?" needs one
+picture, "review my dashboard" needs all of them — so ``full_page`` and
+``select`` both default to the cheapest honest answer and the caller opts in.
+
 Playwright is a **required** dependency (included in the base install). Import /
 launch failures are surfaced as :class:`PlaywrightUnavailableError` with an
 install hint so callers can degrade gracefully instead of crashing.
@@ -14,13 +27,12 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from dataclasses import field
-from typing import Any
 
 from panel_live_server.config import get_config
 
@@ -29,6 +41,15 @@ logger = logging.getLogger(__name__)
 
 class PlaywrightUnavailableError(RuntimeError):
     """Raised when Playwright or its browser is not installed/launchable."""
+
+
+class UnknownPageError(ValueError):
+    """Raised when a caller names a page the dashboard does not have.
+
+    Distinct from every other ``ValueError`` the capture path can raise (a
+    malformed width, say) so the HTTP layer can answer "you asked for a page
+    that isn't there" with a 400 without also blaming the caller for bugs.
+    """
 
 
 _INSTALL_HINT = "Playwright's Chromium browser is not installed. Run:\n    pls install-browser"
@@ -77,158 +98,151 @@ _CONTENT_SELECTOR = "canvas, .bk-Row, .bk-Column, .bk, .markdown, table, img, sv
 # ``.bk-tab``, Material-styled ones (panel-material-ui) render ``[role=tab]``.
 # Only Playwright's selector engine finds these — Bokeh 3 mounts components into
 # shadow roots, which ``document.querySelectorAll`` does not pierce.
+#
+# ``pn.Tabs`` is the only thing treated as pages. A ``Select`` or
+# ``RadioButtonGroup`` wired to swap content is indistinguishable from a data
+# filter without clicking through its options, and clicking runs the user's
+# ``on_change`` handler — which may write a file, post a request, or drop a
+# table. A tool called *screenshot* does not get to find that out by trying.
 _PAGE_SELECTOR = ".bk-tab, [role=tab]"
 
-#: Tallest extent of the page, in CSS px, including content that only scrolls
-#: inside a nested container. Panel templates give ``body`` ``overflow: hidden``
-#: and scroll ``div.main`` instead, so ``documentElement.scrollHeight`` alone
-#: reports one viewport and Playwright's ``full_page`` capture stops at the fold.
-#: Descends into shadow roots for the same reason ``_PAGE_SELECTOR`` needs a
-#: Playwright locator.
-_CONTENT_EXTENT_JS = """() => {
-    let extent = document.documentElement.scrollHeight;
-    const visit = (root) => {
-        for (const el of root.querySelectorAll('*')) {
+#: Which of those tabs is showing. Bokeh marks the active tab with a class;
+#: ARIA-styled tab strips use ``aria-selected``.
+_ACTIVE_PAGE_SELECTOR = ".bk-tab.bk-active, [role=tab][aria-selected='true']"
+
+#: The element whose scrolling reveals the rest of the page. Usually the
+#: document, but Panel templates give ``body`` ``overflow: hidden`` and scroll
+#: ``div.main`` instead — so ``window.scrollTo`` moves nothing and
+#: ``documentElement.scrollHeight`` reports a single viewport. Picks whichever
+#: scrollable element has the most content hidden below its own fold, and
+#: descends into shadow roots for the same reason ``_PAGE_SELECTOR`` needs a
+#: Playwright locator. Returns the element itself, so the caller can both
+#: measure it and set its ``scrollTop``.
+_SCROLLER_JS = """() => {
+    const root = document.scrollingElement || document.documentElement;
+    let best = root;
+    let hidden = root.scrollHeight - root.clientHeight;
+    const visit = (node) => {
+        for (const el of node.querySelectorAll('*')) {
             const overflowY = getComputedStyle(el).overflowY;
-            if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 4) {
-                extent = Math.max(extent, el.getBoundingClientRect().top + window.scrollY + el.scrollHeight);
+            if (overflowY === 'auto' || overflowY === 'scroll') {
+                const overflow = el.scrollHeight - el.clientHeight;
+                if (overflow > hidden) { best = el; hidden = overflow; }
             }
             if (el.shadowRoot) visit(el.shadowRoot);
         }
     };
     visit(document);
-    return Math.ceil(extent);
+    return best;
 }"""
 
-#: HTTP header carrying the base64-encoded page labels alongside a single PNG,
-#: so a caller that captured one page still learns the others exist. A wire
-#: contract between ``endpoints`` and ``client``, like ``diagnostics.HEADER``.
-PAGES_HEADER = "X-PLS-Pages"
+#: How much content the scrolling element holds, how much of it fits, and where
+#: it is scrolled to right now (so the capture can put it back).
+_SCROLLER_METRICS_JS = "el => ({content: el.scrollHeight, visible: el.clientHeight, offset: el.scrollTop})"
 
-# ``pn.Tabs`` is the only Panel widget that unambiguously means "these are
-# pages" — but plenty of hand-built multipage apps route through a plain
-# selection widget instead (``RadioButtonGroup``/``RadioBoxGroup``/``Select``
-# bound via ``@pn.depends``/``pn.bind``, swapping what's shown in a Column or a
-# template's ``main``). There is no structural way to tell "this widget
-# switches pages" from "this widget is a data filter" — Bokeh does not even
-# render the Python-side ``name=`` anywhere in the DOM for the button/box
-# variants, so label text is not a usable signal either. What *is* usable:
-# actually clicking through the options and checking whether the page's
-# content changes. A filter or theme toggle leaves almost all of the text
-# alone; a page swap does not.
-#
-# Only selection-type widgets are considered — never ``Button``/``Toggle``.
-# Those exist for arbitrary on_click side effects (submit, delete, ...), and
-# blindly clicking every button on a dashboard to check "is this navigation"
-# is not something a screenshot tool should ever do.
-_RADIO_BUTTON_GROUP_SELECTOR = "[class*='RadioButtonGroup']"
-#: Matches Bokeh's box-style radio group container only — "RadioGroup" is not
-#: a substring of "RadioButtonGroup", so this and the selector above never
-#: overlap on the same element.
-_RADIO_BOX_GROUP_SELECTOR = "[class*='RadioGroup']"
-_SELECT_SELECTOR = "select"
+_SCROLL_TO_JS = "(el, offset) => { el.scrollTop = offset; }"
 
-#: Extracts the page's visible text for the content-distinctness probe above,
-#: skipping script/style payloads (Bokeh embeds large model/CSS blobs there
-#: that are noise, not content) and anything marked as the widget being probed
-#: (excluding its own option labels keeps a click on the widget itself from
-#: registering as "the page changed").
-_BODY_TEXT_JS = """() => {
-    const SKIP_TAGS = new Set(['SCRIPT', 'STYLE']);
-    const collect = (node) => {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-            if (SKIP_TAGS.has(node.tagName)) return '';
-            if (node.hasAttribute && node.hasAttribute('data-pls-nav-probe')) return '';
-            let text = '';
-            if (node.shadowRoot) for (const c of node.shadowRoot.childNodes) text += collect(c);
-            for (const c of node.childNodes) text += collect(c);
-            return text;
-        }
-        if (node.nodeType === Node.TEXT_NODE) return node.textContent;
-        return '';
-    };
-    return collect(document.body).replace(/\\s+/g, ' ').trim();
-}"""
+#: Settle between tiles. Short and independent of the caller's ``settle_ms``:
+#: scrolling does not re-lay-out or redraw a Bokeh plot, it only needs long
+#: enough for sticky headers and lazily-mounted rows to catch up.
+_TILE_SETTLE_MS = 250
 
-#: Digit runs normalized away before comparing page-content snapshots, so a
-#: data filter that only changes numbers (a table's values, a chart's totals)
-#: does not read as "different pages" — verified against a real dashboard
-#: fixture where a Region selector swapping a Tabulator's numbers otherwise
-#: scored as distinct as genuine page navigation.
-_NUMBER_RE = re.compile(r"\d+([.,]\d+)?")
+#: HTTP header carrying what the capture found — page labels and the tile count
+#: — alongside a single PNG, so a caller that got one image still learns what it
+#: did not see. A wire contract between ``endpoints`` and ``client``, like
+#: ``diagnostics.HEADER``.
+META_HEADER = "X-PLS-Capture"
 
-#: Minimum average pairwise distinctness (0 = identical, 1 = no shared words)
-#: to treat a candidate widget as a page switcher rather than a filter/toggle.
-#: A real 4-page dashboard scored ~0.66-0.71 in testing; a theme toggle and a
-#: numbers-only data filter both scored 0.0 — wide margin either side of this.
-_NAV_DISTINCTNESS_THRESHOLD = 0.3
+#: Ceiling on the encoded header, well under the ~8 KB a server will accept for
+#: one header line. Tab text is user-authored and unbounded; a dashboard whose
+#: labels are paragraphs must cost the caller some page names, never the image.
+_MAX_META_BYTES = 4096
 
-#: Cap on how many candidate widgets (across all three kinds combined) get
-#: probed, so a dashboard with many unrelated selection widgets doesn't pay
-#: for probing all of them.
-_MAX_NAV_CANDIDATES = 4
-
-#: Per-option delay during probing — deliberately short and independent of the
-#: caller's configured ``settle_ms`` (which can be seconds): this only needs
-#: enough time for a reactive callback's DOM update to land, not for a Bokeh
-#: plot to finish animating, and it runs once per option per candidate.
-_NAV_PROBE_SETTLE_MS = 500
-
-
-def _text_distinctness(samples: list[str]) -> float:
-    """Average pairwise word-set distance between *samples*, from 0 to 1.
-
-    0 means every sample has identical words; 1 means no two samples share any
-    word. Digit runs are normalized away first (see ``_NUMBER_RE``) so content
-    that differs only in numbers scores as similar, not distinct.
-    """
-    normalized = [_NUMBER_RE.sub("#", s) for s in samples]
-    word_sets = [set(s.split()) for s in normalized if s]
-    if len(word_sets) < 2:
-        return 0.0
-    distances = []
-    for i in range(len(word_sets)):
-        for j in range(i + 1, len(word_sets)):
-            union = word_sets[i] | word_sets[j]
-            if not union:
-                continue
-            distances.append(1 - len(word_sets[i] & word_sets[j]) / len(union))
-    return sum(distances) / len(distances) if distances else 0.0
+#: Longest single page label kept. Tabs are named, not paragraphed — anything
+#: past this is a runaway string, and truncating it keeps the *other* labels.
+_MAX_LABEL_CHARS = 80
 
 
 @dataclass
 class Capture:
-    """One browser visit: the PNGs taken, and every page that could be taken.
+    """One browser visit: the images taken, and an honest account of the rest.
 
-    ``pages`` holds ``(label, png)`` pairs — the label is the page's tab text,
-    or ``""`` for a dashboard that has no pages (the overwhelmingly common
-    case). ``available`` lists every page label found, whether captured or not.
+    ``images`` holds ``(label, png)`` pairs. The label names the page and, when
+    a page needed more than one, which screen of it — ``""`` for the ordinary
+    single-image case, which is most of them.
+
+    The remaining fields are the report. ``available_pages`` is every tab label
+    found, ``captured_pages`` the ones actually visited; the difference is what
+    the caller has not seen. ``total_tiles`` is how many screens of content the
+    tallest captured page holds and ``captured_tiles`` how many came back;
+    ``total_tiles > captured_tiles`` means the picture stops before the content
+    does.
     """
 
-    pages: list[tuple[str, bytes]] = field(default_factory=list)
-    available: list[str] = field(default_factory=list)
+    images: list[tuple[str, bytes]] = field(default_factory=list)
+    available_pages: list[str] = field(default_factory=list)
+    captured_pages: list[str] = field(default_factory=list)
+    total_tiles: int = 1
+    captured_tiles: int = 1
 
     @property
     def png(self) -> bytes | None:
         """The first PNG, for callers that only ever wanted one image."""
-        return self.pages[0][1] if self.pages else None
+        return self.images[0][1] if self.images else None
+
+    @property
+    def unseen_pages(self) -> list[str]:
+        """Page labels this capture found but did not return an image of."""
+        return [label for label in self.available_pages if label not in self.captured_pages]
 
 
-def encode_pages(labels: list[str]) -> str:
-    """Base64-encode *labels* so they are safe to put in an HTTP header."""
-    return base64.b64encode(json.dumps(labels).encode("utf-8")).decode("ascii")
+def encode_meta(capture: Capture) -> str:
+    """Base64-encode *capture*'s report so it is safe to put in an HTTP header.
+
+    Page labels are dropped from the end until the result fits
+    ``_MAX_META_BYTES``; the tile counts are fixed-size and always survive.
+    """
+    labels = [label[:_MAX_LABEL_CHARS] for label in capture.available_pages]
+    while True:
+        payload = {
+            "pages": labels,
+            "captured": [label[:_MAX_LABEL_CHARS] for label in capture.captured_pages if label[:_MAX_LABEL_CHARS] in labels],
+            "total_tiles": capture.total_tiles,
+            "captured_tiles": capture.captured_tiles,
+        }
+        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+        if len(encoded) <= _MAX_META_BYTES or not labels:
+            return encoded
+        labels.pop()
 
 
-def decode_pages(raw: str) -> list[str]:
-    """Inverse of :func:`encode_pages`. Returns ``[]`` rather than raising on junk."""
+def decode_meta(raw: str) -> dict:
+    """Inverse of :func:`encode_meta`. Returns ``{}`` rather than raising on junk."""
     if not raw:
-        return []
+        return {}
     try:
         decoded = json.loads(base64.b64decode(raw.encode("ascii")).decode("utf-8"))
     except Exception:
-        logger.debug("Could not decode %s header", PAGES_HEADER, exc_info=True)
-        return []
-    return [str(label) for label in decoded] if isinstance(decoded, list) else []
+        logger.debug("Could not decode %s header", META_HEADER, exc_info=True)
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _labels(meta: dict, key: str) -> list[str]:
+    value = meta.get(key)
+    return [str(label) for label in value] if isinstance(value, list) else []
+
+
+def apply_meta(capture: Capture, meta: dict) -> Capture:
+    """Fill *capture*'s report fields in from a decoded :func:`encode_meta` payload."""
+    capture.available_pages = _labels(meta, "pages")
+    capture.captured_pages = _labels(meta, "captured")
+    try:
+        capture.total_tiles = max(1, int(meta.get("total_tiles", 1)))
+        capture.captured_tiles = max(1, int(meta.get("captured_tiles", 1)))
+    except (TypeError, ValueError):
+        capture.total_tiles = capture.captured_tiles = 1
+    return capture
 
 
 def select_pages(labels: list[str], select: str, limit: int) -> list[int]:
@@ -249,7 +263,7 @@ def select_pages(labels: list[str], select: str, limit: int) -> list[int]:
 
     Raises
     ------
-    ValueError
+    UnknownPageError
         If *select* names a page the dashboard does not have.
     """
     select = select.strip()
@@ -262,23 +276,15 @@ def select_pages(labels: list[str], select: str, limit: int) -> list[int]:
     for index, label in enumerate(labels):
         if label.lower() == select.lower():
             return [index]
-    raise ValueError(f"No page named {select!r}. This dashboard has: {', '.join(labels)}")
+    raise UnknownPageError(f"No page named {select!r}. This dashboard has: {', '.join(labels)}")
 
 
-@dataclass
-class _NavCandidate:
-    """A selection widget that might be swapping between pages.
-
-    ``container``/``options`` are Playwright ``Locator``s, left unannotated
-    like ``page`` elsewhere in this module — Playwright is an optional,
-    lazily-imported dependency (see :func:`_BrowserManager._ensure_browser`),
-    so its types are not imported at module level.
-    """
-
-    kind: str  # "radio_button" | "radio_box" | "select"
-    container: Any  # matches exactly one element
-    options: Any  # its clickable options; unused for "select", which uses container.select_option()
-    labels: list[str]
+def tile_label(page: str, index: int, total: int) -> str:
+    """Name one image: which page it is, and which screen of that page."""
+    screen = f"screen {index + 1} of {total}" if total > 1 else ""
+    if page and screen:
+        return f"{page} — {screen}"
+    return page or screen
 
 
 class _BrowserManager:
@@ -323,7 +329,7 @@ class _BrowserManager:
         settle_ms: int,
         timeout_ms: int,
         select: str = "",
-        max_height: int = 10000,
+        max_tiles: int = 4,
         max_pages: int = 12,
         console_sink: list[str] | None = None,
     ) -> Capture:
@@ -367,164 +373,82 @@ class _BrowserManager:
 
             tabs = page.locator(_PAGE_SELECTOR)
             labels = [text.strip() for text in await tabs.all_text_contents()]
-
-            async def click_page(index: int) -> None:
-                await tabs.nth(index).click()
-
-            if not labels:
-                # No pn.Tabs found. Fall back to probing selection widgets that
-                # might be doing the same job by hand.
-                labels, widget_click = await self._find_widget_page_switcher(page, max_pages=max_pages)
-                if widget_click is not None:
-                    click_page = widget_click
-
             wanted = select_pages(labels, select, max_pages)
 
-            async def shoot() -> bytes:
-                return await self._shoot(page, width=width, base_height=height, full_page=full_page, settle_ms=settle_ms, max_height=max_height)
+            tiles = max_tiles if full_page else 1
+            capture = Capture(available_pages=labels, total_tiles=1, captured_tiles=1)
 
             if not wanted:
-                return Capture(pages=[("", await shoot())], available=labels)
+                shots, total = await self._shoot(page, max_tiles=tiles)
+                showing = await self._active_page(page, labels)
+                capture.images = [(tile_label(showing, i, len(shots)), png) for i, png in enumerate(shots)]
+                capture.captured_pages = [showing] if showing else []
+                capture.total_tiles, capture.captured_tiles = total, len(shots)
+                return capture
 
-            shots: list[tuple[str, bytes]] = []
             for index in wanted:
-                await click_page(index)
+                await tabs.nth(index).click()
                 # A page switch re-lays-out and, for Bokeh, redraws from scratch.
                 await page.wait_for_timeout(settle_ms)
-                shots.append((labels[index], await shoot()))
-            return Capture(pages=shots, available=labels)
+                shots, total = await self._shoot(page, max_tiles=tiles)
+                capture.images += [(tile_label(labels[index], i, len(shots)), png) for i, png in enumerate(shots)]
+                capture.captured_pages.append(labels[index])
+                # The report is about the worst page: if any of them continues
+                # past its last image, the caller has not seen the whole thing.
+                capture.total_tiles = max(capture.total_tiles, total)
+                capture.captured_tiles = max(capture.captured_tiles, len(shots))
+            return capture
         finally:
             await context.close()
 
-    async def _find_widget_page_switcher(self, page, *, max_pages: int):
-        """Find a selection widget acting as page navigation, if one exists.
-
-        Returns ``(labels, click_fn)`` for the best candidate that clears
-        ``_NAV_DISTINCTNESS_THRESHOLD``, or ``([], None)`` if nothing does —
-        including when the dashboard has no such widgets at all, which is the
-        overwhelmingly common case and costs nothing beyond the locator counts.
-        """
-        candidates = await self._nav_candidates(page)
-        best: tuple[float, _NavCandidate] | None = None
-        for candidate in candidates:
-            try:
-                samples, original_index = await self._probe_candidate(page, candidate, max_pages=max_pages)
-            except Exception:
-                logger.debug("Widget page-switcher probe failed for a candidate; skipping it.", exc_info=True)
-                continue
-            finally:
-                await self._restore_candidate(candidate, original_index)
-            score = _text_distinctness(samples)
-            if score >= _NAV_DISTINCTNESS_THRESHOLD and (best is None or score > best[0]):
-                best = (score, candidate)
-
-        if best is None:
-            return [], None
-
-        winner = best[1]
-
-        async def click(index: int) -> None:
-            await self._click_option(winner, index)
-
-        return winner.labels, click
-
-    async def _nav_candidates(self, page) -> list[_NavCandidate]:
-        """Discover selection widgets that could plausibly be page switchers."""
-        candidates: list[_NavCandidate] = []
-
-        radio_buttons = page.locator(_RADIO_BUTTON_GROUP_SELECTOR)
-        for i in range(min(await radio_buttons.count(), _MAX_NAV_CANDIDATES)):
-            container = radio_buttons.nth(i)
-            options = container.locator("button")
-            labels = [text.strip() for text in await options.all_text_contents()]
-            if len(labels) >= 2:
-                candidates.append(_NavCandidate("radio_button", container, options, labels))
-
-        radio_boxes = page.locator(_RADIO_BOX_GROUP_SELECTOR)
-        for i in range(min(await radio_boxes.count(), _MAX_NAV_CANDIDATES)):
-            container = radio_boxes.nth(i)
-            options = container.locator("label")
-            labels = [text.strip() for text in await options.all_text_contents()]
-            if len(labels) >= 2:
-                candidates.append(_NavCandidate("radio_box", container, options, labels))
-
-        selects = page.locator(_SELECT_SELECTOR)
-        for i in range(min(await selects.count(), _MAX_NAV_CANDIDATES)):
-            container = selects.nth(i)
-            options = container.locator("option")
-            labels = [text.strip() for text in await options.all_text_contents()]
-            if len(labels) >= 2:
-                candidates.append(_NavCandidate("select", container, options, labels))
-
-        return candidates[:_MAX_NAV_CANDIDATES]
-
-    async def _click_option(self, candidate: _NavCandidate, index: int) -> None:
-        if candidate.kind == "select":
-            await candidate.container.select_option(index=index)
-        else:
-            await candidate.options.nth(index).click()
-
-    async def _original_index(self, candidate: _NavCandidate) -> int:
-        """Best-effort read of which option is selected before probing, to restore it after."""
+    async def _active_page(self, page, labels: list[str]) -> str:
+        """Best-effort read of which tab is showing. ``""`` when there are no tabs."""
+        if not labels:
+            return ""
         try:
-            if candidate.kind == "radio_button":
-                classes = await candidate.options.evaluate_all("els => els.map(el => el.className)")
-                return next((i for i, c in enumerate(classes) if "bk-active" in c), 0)
-            if candidate.kind == "radio_box":
-                checked = await candidate.container.locator("input[type=radio]").evaluate_all("els => els.map(el => el.checked)")
-                return next((i for i, c in enumerate(checked) if c), 0)
-            return int(await candidate.container.evaluate("el => el.selectedIndex") or 0)
+            active = await page.locator(_ACTIVE_PAGE_SELECTOR).first.text_content(timeout=1000)
         except Exception:
-            return 0
+            logger.debug("No active tab matched; assuming the first one.", exc_info=True)
+            return labels[0]
+        return (active or "").strip() or labels[0]
 
-    async def _probe_candidate(self, page, candidate: _NavCandidate, *, max_pages: int) -> tuple[list[str], int]:
-        """Click through *candidate*'s options, snapshotting the page's text each time."""
-        original_index = await self._original_index(candidate)
-        # Excludes the widget's own option labels from the content snapshot, so
-        # clicking the widget itself never counts as "the page changed".
-        await candidate.container.evaluate("el => el.setAttribute('data-pls-nav-probe', '1')")
-        try:
-            samples: list[str] = []
-            for i in range(min(len(candidate.labels), max_pages)):
-                await self._click_option(candidate, i)
-                await page.wait_for_timeout(_NAV_PROBE_SETTLE_MS)
-                samples.append(await page.evaluate(_BODY_TEXT_JS))
-            return samples, original_index
-        finally:
-            await candidate.container.evaluate("el => el.removeAttribute('data-pls-nav-probe')")
+    async def _shoot(self, page, *, max_tiles: int) -> tuple[list[bytes], int]:
+        """Capture the loaded *page* as up to ``max_tiles`` viewport-sized images.
 
-    async def _restore_candidate(self, candidate: _NavCandidate, original_index: int) -> None:
-        """Best-effort: put a probed widget back how it was before moving on."""
-        try:
-            await self._click_option(candidate, original_index)
-        except Exception:
-            logger.debug("Could not restore a probed widget to its original selection.", exc_info=True)
+        Returns ``(pngs, tiles_the_page_needs)`` — the second number is what
+        makes a truncated capture say so instead of looking complete.
 
-    async def _shoot(self, page, *, width: int, base_height: int, full_page: bool, settle_ms: int, max_height: int) -> bytes:
-        """Screenshot the loaded *page*, growing the viewport when asked for the whole thing.
-
-        ``full_page`` on its own only unrolls the *document* scroll. A Panel
-        template scrolls a nested container instead, so the viewport is grown to
-        the measured content extent and the layout is allowed to reflow into it —
-        which is what makes the rest of the dashboard exist to be captured at all.
-        Repeated once, because reflowing taller content can reveal a little more.
+        Deliberately *not* Playwright's ``full_page``, and deliberately not the
+        grow-the-viewport trick that would make it reach a template's nested
+        scroller. Both produce one very tall image, and a very tall image is
+        the wrong answer twice over: it is downscaled to a sliver by the time a
+        model sees it, so every axis label is unreadable; and growing the
+        viewport lets ``sizing_mode="stretch_both"`` plots stretch into it, so
+        the picture is of a window nobody has. Scrolling changes neither the
+        layout nor the scale, so each tile is the app as rendered.
         """
-        if not full_page:
-            return await page.screenshot(type="png")
-
+        scroller = await page.evaluate_handle(_SCROLLER_JS)
         try:
-            for _ in range(2):
-                extent = min(int(await page.evaluate(_CONTENT_EXTENT_JS)), max_height)
-                current = (page.viewport_size or {}).get("height", base_height)
-                if extent <= current:
-                    break
-                await page.set_viewport_size({"width": width, "height": extent})
-                await page.wait_for_timeout(settle_ms)
-            return await page.screenshot(type="png", full_page=True)
+            metrics = await scroller.evaluate(_SCROLLER_METRICS_JS)
+            step = max(1, int(metrics["visible"]))
+            total = max(1, math.ceil(int(metrics["content"]) / step))
+
+            if total == 1 or max_tiles <= 1:
+                return [await page.screenshot(type="png")], total
+
+            shots = []
+            for index in range(min(total, max_tiles)):
+                # scrollTop clamps, so the last tile lands flush with the bottom
+                # and overlaps its neighbour rather than running off the end.
+                await scroller.evaluate(_SCROLL_TO_JS, index * step)
+                await page.wait_for_timeout(_TILE_SETTLE_MS)
+                shots.append(await page.screenshot(type="png"))
+
+            # Leave the next page of a multipage capture starting where this one did.
+            await scroller.evaluate(_SCROLL_TO_JS, metrics["offset"])
+            return shots, total
         finally:
-            # Leave the next page of a multipage capture measuring from the same
-            # starting viewport this one did.
-            await page.set_viewport_size({"width": width, "height": base_height})
+            await scroller.dispose()
 
     async def _stop_playwright(self) -> None:
         if self._playwright is not None:
@@ -543,26 +467,31 @@ async def capture_pages(
     *,
     width: int = 1200,
     height: int = 800,
-    full_page: bool = True,
+    full_page: bool = False,
     settle_ms: int = 1200,
     timeout_ms: int = 30000,
-    select: str = "all",
-    max_height: int = 10000,
+    select: str = "",
+    max_tiles: int = 4,
     max_pages: int = 12,
     console_sink: list[str] | None = None,
 ) -> Capture:
     """Screenshot ``url`` using a shared headless browser.
 
+    Both ``full_page`` and ``select`` default to the cheapest honest answer —
+    one image of what is on screen — and the returned :class:`Capture` reports
+    what that left out. Ask for more only when the question needs it.
+
     Parameters
     ----------
-    full_page : bool, default True
-        Capture everything the page can scroll to, not just the viewport.
-    select : str, default "all"
-        Which page of a multipage dashboard to capture: ``"all"`` for every
-        one, ``""`` for only whichever is showing, or a tab label or 0-based
-        index for one specific page.
-    max_height : int, default 10000
-        Ceiling (px) on how tall a ``full_page`` capture is allowed to grow.
+    full_page : bool, default False
+        Capture the whole scrollable page as a run of viewport-sized tiles
+        rather than the single visible screen.
+    select : str, default ""
+        Which page of a multipage dashboard to capture: ``""`` for whichever is
+        showing, ``"all"`` for every one, or a tab label or 0-based index for
+        one specific page.
+    max_tiles : int, default 4
+        Ceiling on how many tiles one ``full_page`` capture returns.
     max_pages : int, default 12
         Ceiling on how many pages ``select="all"`` expands to.
     console_sink : list[str], optional
@@ -572,13 +501,13 @@ async def capture_pages(
     Returns
     -------
     Capture
-        The PNGs taken and the labels of every page that could be taken.
+        The images taken, plus the pages and tiles that were not.
 
     Raises
     ------
     PlaywrightUnavailableError
         If Playwright or a launchable browser is not available.
-    ValueError
+    UnknownPageError
         If ``select`` names a page the dashboard does not have.
     """
     return await _manager.capture(
@@ -589,7 +518,7 @@ async def capture_pages(
         settle_ms=settle_ms,
         timeout_ms=timeout_ms,
         select=select,
-        max_height=max_height,
+        max_tiles=max_tiles,
         max_pages=max_pages,
         console_sink=console_sink,
     )

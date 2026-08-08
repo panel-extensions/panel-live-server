@@ -141,16 +141,18 @@ class ScreenshotEndpoint(RequestHandler):
     width, height : int
         Viewport size in px (default from config).
     full_page : bool
-        Capture the full scrollable page rather than just the viewport. Defaults
-        to true; pass ``full_page=false`` for a viewport-only capture.
+        Capture the whole scrollable page as a run of viewport-sized tiles
+        rather than the single visible screen. Defaults to false.
     page : str
         Which page of a multipage dashboard to capture: unset for whichever is
         showing, ``all`` for every one, or a tab label or 0-based index.
 
-    A single capture comes back as ``image/png``, with the labels of every page
-    the dashboard has in the ``X-PLS-Pages`` header. ``page=all`` comes back as
-    JSON instead, one base64 PNG per page, because there is no honest way to put
-    several images in one image body.
+    A single capture comes back as ``image/png``. Anything that produced more
+    than one image — several tiles, several pages — comes back as JSON instead,
+    one base64 PNG per image, because there is no honest way to put several
+    images in one image body. Either way the ``X-PLS-Capture`` header reports
+    what was *not* returned: the dashboard's page labels, and how many tiles the
+    content actually needs.
     """
 
     def _error(self, status: int, message: str, error: str | None = None) -> None:
@@ -174,8 +176,8 @@ class ScreenshotEndpoint(RequestHandler):
             snippet_id,
             width=self.get_argument("width", ""),
             height=self.get_argument("height", ""),
-            full_page=self.get_argument("full_page", "true"),
-            page=self.get_argument("page", "all"),
+            full_page=self.get_argument("full_page", "false"),
+            page=self.get_argument("page", ""),
         )
 
     async def post(self):
@@ -217,8 +219,8 @@ class ScreenshotEndpoint(RequestHandler):
                 snippet.id,
                 width=str(body.get("width", "")),
                 height=str(body.get("height", "")),
-                full_page=str(body.get("full_page", True)),
-                page=str(body.get("page", "all")),
+                full_page=str(body.get("full_page", False)),
+                page=str(body.get("page", "")),
             )
         finally:
             db.delete_snippet(snippet.id)
@@ -245,7 +247,7 @@ class ScreenshotEndpoint(RequestHandler):
                 settle_ms=config.screenshot_settle_ms,
                 timeout_ms=config.screenshot_timeout_ms,
                 select=page,
-                max_height=config.screenshot_max_height,
+                max_tiles=config.screenshot_max_tiles,
                 max_pages=config.screenshot_max_pages,
                 console_sink=console_lines,
             )
@@ -254,9 +256,11 @@ class ScreenshotEndpoint(RequestHandler):
             self.set_header("Content-Type", "application/json")
             self.write({"error": "PlaywrightUnavailable", "message": str(e)})
             return
-        except ValueError as e:
-            # An unknown page name — the caller can fix that, so say which exist.
-            self._error(400, str(e), error="ValueError")
+        except screenshot.UnknownPageError as e:
+            # The caller named a page that isn't there — they can fix that, so
+            # say which pages exist. Deliberately not a bare ``ValueError``:
+            # that would report our own bugs as the caller's mistake.
+            self._error(400, str(e), error="UnknownPageError")
             return
         except Exception as e:
             logger.exception(f"Error capturing screenshot for snippet {snippet_id}")
@@ -272,12 +276,11 @@ class ScreenshotEndpoint(RequestHandler):
         self.set_status(200)
         if payload:
             self.set_header(diagnostics.HEADER, diagnostics.encode(payload))
-        if capture.available:
-            self.set_header(screenshot.PAGES_HEADER, screenshot.encode_pages(capture.available))
+        self.set_header(screenshot.META_HEADER, screenshot.encode_meta(capture))
 
-        if len(capture.pages) > 1:
+        if len(capture.images) > 1:
             self.set_header("Content-Type", "application/json")
-            self.write({"pages": [{"label": label, "png": base64.b64encode(png).decode("ascii")} for label, png in capture.pages]})
+            self.write({"images": [{"label": label, "png": base64.b64encode(png).decode("ascii")} for label, png in capture.images]})
             return
 
         self.set_header("Content-Type", "image/png")

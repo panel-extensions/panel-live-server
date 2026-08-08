@@ -319,6 +319,17 @@ async def test_link_only_clients_get_the_open_in_browser_flag(monkeypatch, clien
 # ---------------------------------------------------------------------------
 
 
+def _report(result) -> str:
+    """Everything the tool said except the standing reminder, which is always last.
+
+    The reminder itself names PAGES and BELOW THE FOLD — it has to, so the model
+    knows what those lines mean — so asserting over the whole reply would pass
+    whether or not a report was actually emitted.
+    """
+    texts = [block.text for block in result.content if block.type == "text"]
+    return " ".join(texts[:-1])
+
+
 class TestScreenshotDrafts:
     """The model can look at its own work before the user sees it."""
 
@@ -356,7 +367,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         async with Client(mcp) as client:
             with (
-                patch.object(server_module._client, "screenshot_code", return_value=(Capture(pages=[("", b"\x89PNG")]), None, {})) as capture,
+                patch.object(server_module._client, "screenshot_code", return_value=(Capture(images=[("", b"\x89PNG")]), None, {})) as capture,
                 patch.object(server_module._client, "create_snippet") as create,
             ):
                 result = await client.call_tool("screenshot", {"code": "1 + 1", "name": "Draft"})
@@ -374,27 +385,27 @@ class TestScreenshotDrafts:
             properties = tool.inputSchema["properties"]
             assert "full_page" in properties
             assert "page" in properties
-            # Scrolling content and other pages are invisible unless captured, so
-            # neither must be something the caller has to remember to opt into.
-            assert properties["full_page"].get("default") is True
-            assert properties["page"].get("default") == "all"
+            # Capturing everything by default floods the caller's context with
+            # pages it did not ask about, so more than one screen is opted into.
+            assert properties["full_page"].get("default") is False
+            assert properties["page"].get("default") == ""
 
     @pytest.mark.asyncio
-    async def test_omitting_full_page_and_page_still_captures_everything(self):
-        """The defaults must reach the client as (True, 'all'), not just sit in the schema."""
+    async def test_omitting_them_captures_one_screen_of_the_current_page(self):
+        """The defaults must reach the client as (False, ''), not just sit in the schema."""
         server_module._validation_cache.clear()
-        capture = Capture(pages=[("", b"\x89PNG")])
+        capture = Capture(images=[("", b"\x89PNG")])
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})) as shot:
                 await client.call_tool("screenshot", {"code": "1 + 1"})
 
-        assert shot.call_args.args[-2:] == (True, "all")
+        assert shot.call_args.args[-2:] == (False, "")
 
     @pytest.mark.asyncio
     async def test_full_page_and_page_reach_the_client(self):
         """A parameter the tool accepts but never forwards is worse than none at all."""
         server_module._validation_cache.clear()
-        capture = Capture(pages=[("", b"\x89PNG")])
+        capture = Capture(images=[("", b"\x89PNG")])
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})) as shot:
                 await client.call_tool("screenshot", {"code": "1 + 1", "full_page": True, "page": "Sales"})
@@ -402,42 +413,71 @@ class TestScreenshotDrafts:
         assert shot.call_args.args[-2:] == (True, "Sales")
 
     @pytest.mark.asyncio
-    async def test_every_page_of_a_multipage_dashboard_comes_back_labelled(self):
+    async def test_several_images_come_back_labelled(self):
         """An unattributed pile of pictures is not an answer about a dashboard."""
         server_module._validation_cache.clear()
-        capture = Capture(pages=[("Sales", b"\x89A"), ("Costs", b"\x89B")], available=["Sales", "Costs"])
+        images = [("Sales", b"\x89A"), ("Costs", b"\x89B")]
+        capture = Capture(images=images, available_pages=["Sales", "Costs"], captured_pages=["Sales", "Costs"])
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
                 result = await client.call_tool("screenshot", {"code": "1 + 1", "page": "all"})
 
         assert [block.type for block in result.content[:4]] == ["text", "image", "text", "image"]
-        assert "page: Sales" in result.content[0].text
-        assert "page: Costs" in result.content[2].text
+        assert "Sales" in result.content[0].text
+        assert "Costs" in result.content[2].text
 
     @pytest.mark.asyncio
-    async def test_uncaptured_pages_are_named_beside_the_image(self):
+    async def test_pages_not_captured_are_named_beside_the_image(self):
         """A page not captured is absent from the picture exactly as an empty chart is."""
         server_module._validation_cache.clear()
-        capture = Capture(pages=[("Sales", b"\x89A")], available=["Sales", "Costs", "Forecast"])
+        capture = Capture(images=[("Sales", b"\x89A")], available_pages=["Sales", "Costs", "Forecast"], captured_pages=["Sales"])
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
                 result = await client.call_tool("screenshot", {"code": "1 + 1"})
 
-        text = " ".join(block.text for block in result.content if block.type == "text")
+        text = _report(result)
+        assert "PAGES:" in text
+        assert "You have seen: Sales" in text
         assert "Costs" in text and "Forecast" in text
-        assert "Sales" not in text.split("you have not seen:")[1]
 
     @pytest.mark.asyncio
-    async def test_single_page_dashboard_says_nothing_about_pages(self):
-        """The hint must not fire for the overwhelmingly common single-page case."""
+    async def test_content_below_the_fold_is_reported_with_a_way_to_get_it(self):
+        """One screen of a four-screen dashboard must not read as the whole thing."""
         server_module._validation_cache.clear()
-        capture = Capture(pages=[("", b"\x89A")], available=[])
+        capture = Capture(images=[("", b"\x89A")], total_tiles=4, captured_tiles=1)
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
                 result = await client.call_tool("screenshot", {"code": "1 + 1"})
 
-        text = " ".join(block.text for block in result.content if block.type == "text")
-        assert "you have not seen" not in text
+        text = _report(result)
+        assert "BELOW THE FOLD: 3 more screens" in text
+        assert "full_page=True" in text
+
+    @pytest.mark.asyncio
+    async def test_a_truncated_tiled_capture_does_not_suggest_full_page_again(self):
+        """full_page was already set; repeating the advice would send the caller in a loop."""
+        server_module._validation_cache.clear()
+        capture = Capture(images=[("screen 1 of 2", b"\x89A"), ("screen 2 of 2", b"\x89B")], total_tiles=6, captured_tiles=2)
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+                result = await client.call_tool("screenshot", {"code": "1 + 1", "full_page": True})
+
+        text = _report(result)
+        assert "4 more screens" in text and "tile cap" in text
+        assert "full_page=True" not in text
+
+    @pytest.mark.asyncio
+    async def test_an_ordinary_chart_gets_no_report_at_all(self):
+        """The common case is one small chart that fits — it must cost no extra words."""
+        server_module._validation_cache.clear()
+        capture = Capture(images=[("", b"\x89A")])
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+                result = await client.call_tool("screenshot", {"code": "1 + 1"})
+
+        text = _report(result)
+        assert "PAGES:" not in text
+        assert "BELOW THE FOLD" not in text
 
     @pytest.mark.asyncio
     async def test_missing_browser_is_reported_not_retried(self):

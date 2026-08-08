@@ -654,8 +654,8 @@ async def screenshot(
     method: Literal["inline", "server"] = "inline",
     width: int = 1200,
     height: int = 800,
-    full_page: bool = True,
-    page: str = "all",
+    full_page: bool = False,
+    page: str = "",
     ctx: Context | None = None,
 ) -> ToolResult:
     """See a visualization as a PNG — returns the image to you (the LLM), not to the user.
@@ -722,15 +722,20 @@ async def screenshot(
     ════════════════════════════════════════════════════════════════════════
     TALL DASHBOARDS AND MULTIPAGE DASHBOARDS:
     ════════════════════════════════════════════════════════════════════════
-    Both captured automatically, no need to ask: `full_page` (scrolling
-    content, including a template's main area) and `page` (every page of a
-    tabbed dashboard, or hand-built nav via RadioButtonGroup/RadioBoxGroup/
-    Select) default to capturing everything. NOT covered: Button.on_click or
-    URL-based navigation.
+    By default you get one screen: what a user sees on load. A page taller than
+    the window, and any tab you did not open, are missing from that picture the
+    same silent way an empty chart is — so the reply TELLS you when there is
+    more, naming the tabs it found and how many screens of content there are.
 
-    Pass `full_page=False` or `page="Sales"`/`page="2"`/`page=""` for less
-    than everything. Pages that didn't fit the cap are named beside the image
-    — ask for those explicitly rather than assuming something is missing.
+    Read that line and decide. You know the question; this tool does not.
+      · `full_page=True`   → the whole scrollable page, as a few readable
+                             screen-sized images rather than one shrunken strip
+      · `page="Sales"`     → that tab (a label or a 0-based index)
+      · `page="all"`       → every tab, for a whole-dashboard review
+
+    Ask for one tab, not all of them, when you only care about one. Only
+    `pn.Tabs` counts as pages; navigation hand-built from a Select or a Button
+    is not clicked for you, because clicking it would run the user's code.
 
     WHEN TO USE — a follow-up question about an already-shown visualization that
     can only be answered by seeing it (random/dynamic data, or visual position):
@@ -763,19 +768,20 @@ async def screenshot(
         Browser viewport width in pixels.
     height : int, default 800
         Browser viewport height in pixels.
-    full_page : bool, default True
-        Capture everything the page can scroll to, not just the viewport. Set
-        False for a viewport-only capture (cheaper, smaller image).
-    page : str, default "all"
-        Which page of a multipage dashboard to capture: ``"all"`` (default)
-        captures every page, a tab label or 0-based index captures one, and
-        ``""`` captures only whichever page is currently showing.
+    full_page : bool, default False
+        Capture the whole scrollable page instead of the visible screen. Comes
+        back as several screen-sized images, each readable at native scale.
+    page : str, default ""
+        Which page of a multipage dashboard to capture. Default captures
+        whichever one is showing; pass a tab label or 0-based index for one
+        specific page, or ``"all"`` for every page.
 
     Returns
     -------
     Image
-        PNG screenshot of the rendered visualization — one per page for a
-        multipage dashboard.
+        PNG screenshot of the rendered visualization — one per screen when
+        ``full_page`` is set, one per page when ``page="all"`` — plus a note
+        naming anything on the page the images do not show.
     """
     if not snippet_id and not code:
         raise ToolError("Pass code=... to screenshot a draft, or snippet_id=... to screenshot a visualization show() already returned.")
@@ -805,15 +811,15 @@ async def screenshot(
             raise ToolError(f"Screenshot failed: {error}")
         reminder = render_prompt(SCREENSHOT, "shown_image")
 
-    if not capture or not capture.pages:
+    if not capture or not capture.images:
         raise ToolError("Screenshot capture returned no image data.")
 
     content: list[Any] = []
-    for label, png in capture.pages:
-        # Label each image when there is more than one, so the pages of a
-        # dashboard do not arrive as an unattributed pile of pictures.
-        if label and len(capture.pages) > 1:
-            content.append(TextContent(type="text", text=f"--- page: {label} ---"))
+    for label, png in capture.images:
+        # Label each image when there is more than one, so the screens and pages
+        # of a dashboard do not arrive as an unattributed pile of pictures.
+        if label and len(capture.images) > 1:
+            content.append(TextContent(type="text", text=f"--- {label} ---"))
         content.append(Image(data=png, format="png").to_image_content())
 
     # Anything the snippet printed, and anything the browser logged, comes back
@@ -823,22 +829,46 @@ async def screenshot(
     if output:
         content.append(TextContent(type="text", text=f"--- output ---\n{output}"))
 
-    if uncaptured := _uncaptured_pages(capture):
-        content.append(TextContent(type="text", text=uncaptured))
+    if report := _capture_report(capture):
+        content.append(TextContent(type="text", text=report))
 
     content.append(TextContent(type="text", text=reminder))
     return ToolResult(content=content)
 
 
-def _uncaptured_pages(capture: Capture) -> str:
-    """Name the pages this capture did not return, if any.
+def _capture_report(capture: Capture) -> str:
+    """Name what is on the page but not in the images, if anything.
 
-    A tabbed dashboard shows one page at a time, so the other pages are absent
-    from the image in exactly the way an empty chart is — silently. Saying they
-    exist is what stops an agent reporting on a third of a dashboard.
+    A tab that was not opened, and content past the fold, are absent from a
+    screenshot in exactly the way an empty chart is — silently. Nothing in a
+    rectangle of pixels says "there is more". So the browser is asked, and the
+    answer is written down beside the picture.
+
+    Both facts are read off the loaded page for the price of two locator calls,
+    which is why this runs on every capture rather than being something to opt
+    into. What to *do* about it is the model's call, not ours: it knows the
+    question being asked and can tell "is the top chart blue?" from "review my
+    dashboard". Hence a report, not more images.
+
+    Returns ``""`` when the images already show everything — the common case
+    for an ordinary chart, which should cost no extra words at all.
     """
-    shown = {label for label, _ in capture.pages}
-    missing = [label for label in capture.available if label not in shown]
-    if not missing:
-        return ""
-    return f"This dashboard has {len(capture.available)} pages; you have not seen: {', '.join(missing)}. Call screenshot(page='<name>') or page='all' to see them."
+    notes = []
+
+    if unseen := capture.unseen_pages:
+        seen = ", ".join(capture.captured_pages) or "none of them"
+        notes.append(
+            f"PAGES: this dashboard has {len(capture.available_pages)} — {', '.join(capture.available_pages)}. "
+            f"You have seen: {seen}. For another, call screenshot(page='{unseen[0]}'); for every one, page='all'."
+        )
+
+    if capture.total_tiles > capture.captured_tiles:
+        more = capture.total_tiles - capture.captured_tiles
+        screens = "screen" if more == 1 else "screens"
+        if capture.captured_tiles > 1:
+            # Already tiling — asking for full_page again would change nothing.
+            notes.append(f"BELOW THE FOLD: {more} more {screens} of content follow the last image; the per-call tile cap stopped there.")
+        else:
+            notes.append(f"BELOW THE FOLD: {more} more {screens} of content continue past this image. Call screenshot(full_page=True) to see them.")
+
+    return "\n".join(notes)
