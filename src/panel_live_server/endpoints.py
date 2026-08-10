@@ -22,6 +22,7 @@ from panel_live_server.config import get_config
 from panel_live_server.database import get_db
 from panel_live_server.utils import execute_in_module
 from panel_live_server.utils import extract_last_expression
+from panel_live_server.utils import validate_code
 from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ast_check
 from panel_live_server.validation import ruff_format
@@ -466,30 +467,41 @@ class SnippetEditEndpoint(RequestHandler):
             self._error(400, f"That edit would leave the code unparsable: {syntax_error}", error="SyntaxError")
             return
 
+        # Run the edited code here so the result can go straight to `show`.
+        # promote_draft gates on status == "success", so without this an edit had to
+        # be screenshotted purely to stamp the row — a Playwright launch to change a
+        # colour. It also stops a stale status from the pre-edit render waving
+        # through code that no longer runs.
+        if run_error := validate_code(edited):
+            self._error(400, f"The edited code no longer runs: {run_error}", error="RuntimeError")
+            return
+
         if snippet.draft:
-            db.update_snippet(snippet_id, app=edited)
+            db.update_snippet(snippet_id, app=edited, status="success")
             result_id, forked = snippet_id, False
         else:
             # Already shown, so it must not change under the user. Fork instead:
-            # the edit lands on a new draft, and the live snippet stays put until
-            # the model screenshots the fork and shows it.
+            # the edit lands on a new draft and the live snippet stays put until the
+            # model shows the fork.
             fork = db.create_visualization(
                 app=edited,
                 name=snippet.name,
                 description=snippet.description,
                 method=snippet.method,
-                # Same three as the screenshot draft path: verbatim so the next
-                # old_str still matches, unrun because the screenshot runs it.
+                # Verbatim so the next old_str still matches. execute=False because
+                # validate_code above already ran it; running twice for one edit is
+                # the cost this endpoint exists to avoid.
                 format=False,
                 execute=False,
                 draft=True,
             )
+            db.update_snippet(fork.id, status="success")
             result_id, forked = fork.id, True
 
         self.set_status(200)
         self.set_header("Content-Type", "application/json")
         # Deliberately no code echo: sending the whole snippet back would undo the
-        # saving the edit just made. The next screenshot is how the result is seen.
+        # saving the edit just made.
         self.write({"id": result_id, "chars": len(edited), "forked": forked})
 
 

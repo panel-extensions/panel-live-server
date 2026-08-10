@@ -615,6 +615,38 @@ class TestSnippetEditEndpoint(AsyncHTTPTestCase):
         assert payload["forked"] is False
         assert payload["id"] == draft.id
 
+    def test_edit_that_breaks_at_runtime_is_refused(self) -> None:
+        """The edit runs before it returns, so a broken one never becomes a showable id.
+
+        Without this the model gets an id back, shows it, and the user is the one
+        who discovers the traceback.
+        """
+        snippet = self.db.create_visualization(app="x = 1", run_static=False, format=False, execute=False, draft=False)
+
+        response = self._edit(snippet_id=snippet.id, old_str="1", new_str="undefined_name")
+
+        assert response.code == 400
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["error"] == "RuntimeError"
+        assert "no longer runs" in payload["message"]
+        assert self.db.get_snippet(snippet.id).app == "x = 1", "the shown snippet must not move"
+        assert self.db.list_snippets(include_drafts=True) == [self.db.get_snippet(snippet.id)], "no fork should be left behind"
+
+    def test_edited_code_is_ready_to_show_without_a_screenshot(self) -> None:
+        """A fork must come back promotable, or every tweak costs a Playwright launch.
+
+        promote_draft gates on status == "success"; the edit runs the code so that
+        gate is already satisfied.
+        """
+        snippet = self.db.create_visualization(app="x = 1", name="Chart", run_static=False, format=False, execute=False, draft=False)
+
+        payload = json.loads(self._edit(snippet_id=snippet.id, old_str="1", new_str="2").body.decode("utf-8"))
+
+        assert self.db.get_snippet(payload["id"]).status == "success"
+        promoted = self.db.promote_draft(payload["id"])
+        assert promoted.draft is False
+        assert promoted.app == "x = 2"
+
     def test_unknown_snippet_is_404(self) -> None:
         response = self._edit(snippet_id="nope", old_str="a", new_str="b")
 

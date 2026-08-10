@@ -15,11 +15,12 @@ version you approved.
 `edit(snippet_id, old_str, new_str)` changes part of something already stored,
 without you resending it. It works on a draft (edited in place) and on something
 the user has already been shown (forked into a new draft, so their version does
-not change under them). Either way, `screenshot(draft_id=...)` the id it hands
-back, then `show(draft_id=...)`. Prefer this over resending the whole snippet
-when you are adjusting something small — a colour, a title, one line — since a
-full rewrite costs you the entire snippet each round. Resending is still fine for
-short snippets or sweeping changes.
+not change under them). The edited code is run before it returns, so the id you
+get back can go straight to `show(draft_id=...)`; screenshot it first only when
+you need to SEE the change rather than just make it. Prefer this over resending
+the whole snippet when you are adjusting something small — a colour, a title, one
+line — since a full rewrite costs you the entire snippet each round. Resending is
+still fine for short snippets or sweeping changes.
 Never call `show` on work you are still iterating on, and never call it just to
 get a snippet_id to screenshot.
 `evaluate(code)` runs code and returns its TEXT output to you — whatever it

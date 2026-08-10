@@ -578,10 +578,9 @@ async def show(
             "— the rendered plot can differ from the raw data (row order, axis inversion, "
             "sorting, binning).\n"
             f'- If the user wants to MODIFY it, call `edit("{snippet_id}", old_str, new_str)` '
-            "with just the part that changes. That forks it into a new draft rather than "
-            "altering what the user is looking at; screenshot the returned id, then "
-            "`show(draft_id=...)` to hand over the new version. Resend the whole snippet "
-            "only when the change touches most of the code."
+            "with just the part that changes. That forks it into a new draft, runs it, and "
+            "returns the new id — pass that to `show(draft_id=...)` to hand over the new "
+            "version. Resend the whole snippet only when the change touches most of the code."
         )
         _attach_token_count(payload)
         return json.dumps(payload)
@@ -705,14 +704,14 @@ async def edit(
       its id comes back, while the version the user is looking at does not move.
       Showing the fork adds a new entry to their feed; the old one stays.
 
-    Either way the edit does not re-render on its own: `screenshot(draft_id=...)`
-    with the id you were given, then `show(draft_id=...)` when it looks right.
+    Either way the edited code is run before this returns, so the id you get back
+    is ready to hand over: `show(draft_id=...)` directly. Screenshot it first only
+    if you need to SEE the change — a layout you are unsure of, not a colour you
+    named.
 
     Typical loops:
-        building   → `screenshot(code=...)` → `edit(id, old, new)` →
-                     `screenshot(draft_id=...)` → `show(draft_id=...)`
-        user tweak → `show` returns an id → `edit(id, old, new)` →
-                     `screenshot(draft_id=<new id>)` → `show(draft_id=<new id>)`
+        user tweak → `show` returns an id → `edit(id, old, new)` → `show(draft_id=<new id>)`
+        unsure     → `edit(id, old, new)` → `screenshot(draft_id=<new id>)` → `show(draft_id=<new id>)`
 
     For a small snippet, or a change touching most of the code, just resend it —
     that is fine and often simpler.
@@ -729,7 +728,7 @@ async def edit(
     Returns
     -------
     str
-        Confirmation naming the id to screenshot next, or why the edit was refused.
+        Confirmation naming the id to show next, or why the edit was refused.
     """
     await _ensure_client_ready(ctx)
 
@@ -742,11 +741,14 @@ async def edit(
     new_id = result.get("id", snippet_id)
     if result.get("forked"):
         return (
-            f"Created draft {new_id} from {snippet_id} with your change applied. {snippet_id} is untouched, so the user still sees the old version. "
-            f'Call screenshot(draft_id="{new_id}") to check it, then show(draft_id="{new_id}") to hand over the new version.'
+            f"Created draft {new_id} from {snippet_id} with your change applied, and it runs. {snippet_id} is untouched, so the user still sees the old version. "
+            f'Call show(draft_id="{new_id}") to hand over the new version — screenshot it first only if you need to see the change.'
         )
 
-    return f'Draft {snippet_id} updated ({result.get("chars", 0)} characters). Call screenshot(draft_id="{snippet_id}") to see the result.'
+    return (
+        f'Draft {snippet_id} updated ({result.get("chars", 0)} characters) and it runs. show(draft_id="{snippet_id}") when ready, or '
+        f'screenshot(draft_id="{snippet_id}") first if you need to see it.'
+    )
 
 
 @mcp.tool(name="screenshot")
@@ -838,7 +840,7 @@ async def screenshot(
 
     Typical loops:
         · building something  → `screenshot(code=...)` → revise → `screenshot(code=...)` → `show(draft_id=...)`
-        · small adjustment    → `edit(id, old, new)` → `screenshot(draft_id=...)` → `show(draft_id=...)`
+        · small adjustment    → `edit(id, old, new)` → `show(draft_id=<new id>)`
         · visual follow-up    → `show` (returns id) → `screenshot(snippet_id=id)`
 
     Parameters
