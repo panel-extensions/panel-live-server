@@ -483,9 +483,9 @@ class TestEditTool:
                 result = await client.call_tool("edit", {"snippet_id": "shown-1", "old_str": "a", "new_str": "b"})
 
         text = result.content[0].text
-        assert 'screenshot(draft_id="draft-9")' in text
         assert 'show(draft_id="draft-9")' in text
         assert "shown-1 is untouched" in text
+        assert 'show(draft_id="shown-1")' not in text, "showing the old id would hand back the unchanged version"
 
     @pytest.mark.asyncio
     async def test_refused_edit_comes_back_as_guidance(self):
