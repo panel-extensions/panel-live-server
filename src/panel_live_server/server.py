@@ -383,10 +383,13 @@ def _build_frame_domains() -> list[str]:
                 "https://cdn.holoviz.org",
                 "https://cdn.jsdelivr.net",
                 "https://cdn.plot.ly",
-                # The App fetches a snippet's code from the Panel server when the
-                # code panel is opened, rather than being handed it in the payload.
-                *_build_frame_domains(),
             ],
+            # The App fetches a snippet's code from the Panel server when the code
+            # panel is opened, rather than being handed it in the payload (issue #58).
+            # That is an XHR, so it needs connect-src: resource_domains only covers
+            # script/img/style/font, and listing the origin there left the fetch
+            # blocked with nothing but "Failed to fetch" to go on.
+            connect_domains=_build_frame_domains(),
             frame_domains=_build_frame_domains(),
         )
     ),
