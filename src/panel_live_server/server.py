@@ -853,7 +853,8 @@ async def screenshot(
     """
     if not snippet_id and not code and not draft_id:
         raise ToolError(
-            "Pass code=... to screenshot a new draft, draft_id=... to re-render one you already have, or snippet_id=... to screenshot a visualization show() already returned."
+            "Pass code=... to screenshot a new draft, draft_id=... to re-render one you already have, or snippet_id=... "
+            "to screenshot a visualization show() already returned."
         )
 
     await _ensure_client_ready(ctx)

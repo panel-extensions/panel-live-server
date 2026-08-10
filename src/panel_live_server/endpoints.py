@@ -435,7 +435,8 @@ class DraftEditEndpoint(RequestHandler):
         if occurrences == 0:
             self._error(
                 400,
-                "old_str was not found in the draft. It must match the stored text exactly, including indentation. Screenshot the draft again if you have lost track of its current contents.",
+                "old_str was not found in the draft. It must match the stored text exactly, including indentation. "
+                "Screenshot the draft again if you have lost track of its current contents.",
                 error="NoMatch",
             )
             return
@@ -454,7 +455,7 @@ class DraftEditEndpoint(RequestHandler):
         # left untouched so a rejected edit cannot leave it in a worse state than
         # the model last saw.
         if syntax_error := ast_check(edited):
-            self._error(400, f"That edit would leave the draft unparseable: {syntax_error}", error="SyntaxError")
+            self._error(400, f"That edit would leave the draft unparsable: {syntax_error}", error="SyntaxError")
             return
 
         db.update_snippet(draft_id, app=edited)
