@@ -373,11 +373,11 @@ class ScreenshotEndpoint(RequestHandler):
         self.write(png)
 
 
-class DraftEditEndpoint(RequestHandler):
-    """Change part of a draft in place, without resending the whole snippet.
+class SnippetEditEndpoint(RequestHandler):
+    """Change part of a stored snippet without resending the whole thing.
 
-    ``POST /api/draft/edit`` with ``{"draft_id": ..., "old_str": ..., "new_str":
-    ...}`` replaces one occurrence of ``old_str`` in the draft's code.
+    ``POST /api/snippet/edit`` with ``{"snippet_id": ..., "old_str": ..., "new_str":
+    ...}`` replaces one occurrence of ``old_str`` in the snippet's code.
 
     A draft loop otherwise costs a full rewrite per turn: the model resends every
     line to change a colour. Substring editing makes the output proportional to
@@ -388,9 +388,11 @@ class DraftEditEndpoint(RequestHandler):
     would not be the text on disk, and ``old_str`` would miss for reasons no one
     could see.
 
-    Scoped to drafts on purpose. Editing something the user is already looking at
-    is a different feature with different consequences, and nothing here should
-    quietly change a live visualization under them.
+    A draft is edited in place. Something the user has already been shown is
+    *forked* instead: the edit lands on a new draft and the live row is left
+    alone, so nothing changes under someone who is looking at it. Refusing these
+    outright was the earlier design, and it cost a wasted call on the commonest
+    shape there is — show, then "tweak that".
     """
 
     def _error(self, status: int, message: str, error: str | None = None) -> None:
@@ -400,19 +402,19 @@ class DraftEditEndpoint(RequestHandler):
         self.write({"error": error or message, "message": message})
 
     def post(self):
-        """Apply a single substring replacement to a stored draft."""
+        """Apply a single substring replacement to a stored snippet."""
         try:
             body = json.loads(self.request.body.decode("utf-8"))
         except ValueError:
             self._error(400, "Request body must be JSON")
             return
 
-        draft_id = body.get("draft_id", "")
+        snippet_id = body.get("snippet_id", "")
         old_str = body.get("old_str", "")
         new_str = body.get("new_str", "")
 
-        if not draft_id:
-            self._error(400, "Missing 'draft_id' in request body")
+        if not snippet_id:
+            self._error(400, "Missing 'snippet_id' in request body")
             return
         if not old_str:
             self._error(400, "Missing 'old_str' in request body")
@@ -423,27 +425,23 @@ class DraftEditEndpoint(RequestHandler):
         usage.record("edit", len(old_str) + len(new_str))
 
         db = get_db()
-        snippet = db.get_snippet(draft_id)
+        snippet = db.get_snippet(snippet_id)
         if snippet is None:
-            self._error(404, f"No draft found with id {draft_id!r}. Drafts are cleared after a while — screenshot the code again to get a fresh one.")
+            self._error(404, f"No snippet found with id {snippet_id!r}. Drafts are cleared after a while — screenshot the code again to get a fresh one.")
             return
-        if not snippet.draft:
-            self._error(400, f"Snippet {draft_id!r} has already been shown to the user and cannot be edited.")
-            return
-
         occurrences = snippet.app.count(old_str)
         if occurrences == 0:
             self._error(
                 400,
-                "old_str was not found in the draft. It must match the stored text exactly, including indentation. "
-                "Screenshot the draft again if you have lost track of its current contents.",
+                "old_str was not found in the code. It must match the stored text exactly, including indentation. "
+                "Screenshot it again if you have lost track of its current contents.",
                 error="NoMatch",
             )
             return
         if occurrences > 1:
             self._error(
                 400,
-                f"old_str appears {occurrences} times in the draft, so the edit is ambiguous. Include more surrounding context to make it unique.",
+                f"old_str appears {occurrences} times, so the edit is ambiguous. Include more surrounding context to make it unique.",
                 error="AmbiguousMatch",
             )
             return
@@ -451,20 +449,38 @@ class DraftEditEndpoint(RequestHandler):
         edited = snippet.app.replace(old_str, new_str, 1)
 
         # Cheap syntax gate. The alternative is finding out by launching a browser,
-        # which is the expensive way to learn about a missing bracket. The draft is
-        # left untouched so a rejected edit cannot leave it in a worse state than
-        # the model last saw.
+        # which is the expensive way to learn about a missing bracket. Nothing is
+        # written so a rejected edit cannot leave anything in a worse state than the
+        # model last saw.
         if syntax_error := ast_check(edited):
-            self._error(400, f"That edit would leave the draft unparsable: {syntax_error}", error="SyntaxError")
+            self._error(400, f"That edit would leave the code unparsable: {syntax_error}", error="SyntaxError")
             return
 
-        db.update_snippet(draft_id, app=edited)
+        if snippet.draft:
+            db.update_snippet(snippet_id, app=edited)
+            result_id, forked = snippet_id, False
+        else:
+            # Already shown, so it must not change under the user. Fork instead:
+            # the edit lands on a new draft, and the live snippet stays put until
+            # the model screenshots the fork and shows it.
+            fork = db.create_visualization(
+                app=edited,
+                name=snippet.name,
+                description=snippet.description,
+                method=snippet.method,
+                # Same three as the screenshot draft path: verbatim so the next
+                # old_str still matches, unrun because the screenshot runs it.
+                format=False,
+                execute=False,
+                draft=True,
+            )
+            result_id, forked = fork.id, True
 
         self.set_status(200)
         self.set_header("Content-Type", "application/json")
         # Deliberately no code echo: sending the whole snippet back would undo the
         # saving the edit just made. The next screenshot is how the result is seen.
-        self.write({"id": draft_id, "chars": len(edited)})
+        self.write({"id": result_id, "chars": len(edited), "forked": forked})
 
 
 class EvaluateEndpoint(RequestHandler):

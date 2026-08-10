@@ -452,14 +452,14 @@ class TestShowPromotesDrafts:
 
 
 class TestEditTool:
-    """edit(draft_id, old_str, new_str) keeps an iteration proportional to the change."""
+    """edit(snippet_id, old_str, new_str) keeps an iteration proportional to the change."""
 
     @pytest.mark.asyncio
     async def test_edit_is_exposed(self):
         async with Client(mcp) as client:
             tool = next(t for t in await client.list_tools() if t.name == "edit")
             properties = tool.inputSchema["properties"]
-            assert {"draft_id", "old_str", "new_str"} <= set(properties)
+            assert {"snippet_id", "old_str", "new_str"} <= set(properties)
             # new_str is omitted to delete, so it must not be mandatory.
             assert "new_str" not in tool.inputSchema.get("required", [])
 
@@ -467,25 +467,38 @@ class TestEditTool:
     async def test_successful_edit_points_at_the_re_render(self):
         """An edit changes stored code but renders nothing, so the next step matters."""
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "edit_draft", return_value={"id": "draft-7", "chars": 42}):
-                result = await client.call_tool("edit", {"draft_id": "draft-7", "old_str": "a", "new_str": "b"})
+            with patch.object(server_module._client, "edit_snippet", return_value={"id": "draft-7", "chars": 42, "forked": False}):
+                result = await client.call_tool("edit", {"snippet_id": "draft-7", "old_str": "a", "new_str": "b"})
 
         text = result.content[0].text
         assert "draft-7" in text
         assert 'screenshot(draft_id="draft-7")' in text
 
     @pytest.mark.asyncio
+    async def test_forked_edit_points_at_the_new_id(self):
+        """A fork returns an id the model has never seen; naming the old one would re-render the old version."""
+        forked = {"id": "draft-9", "chars": 42, "forked": True}
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "edit_snippet", return_value=forked):
+                result = await client.call_tool("edit", {"snippet_id": "shown-1", "old_str": "a", "new_str": "b"})
+
+        text = result.content[0].text
+        assert 'screenshot(draft_id="draft-9")' in text
+        assert 'show(draft_id="draft-9")' in text
+        assert "shown-1 is untouched" in text
+
+    @pytest.mark.asyncio
     async def test_refused_edit_comes_back_as_guidance(self):
         """The user has seen nothing, so a refusal is the model's to act on, not report."""
-        refusal = {"error": "AmbiguousMatch", "message": "old_str appears 3 times in the draft, so the edit is ambiguous."}
+        refusal = {"error": "AmbiguousMatch", "message": "old_str appears 3 times, so the edit is ambiguous."}
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "edit_draft", return_value=refusal):
-                result = await client.call_tool("edit", {"draft_id": "draft-7", "old_str": "a", "new_str": "b"})
+            with patch.object(server_module._client, "edit_snippet", return_value=refusal):
+                result = await client.call_tool("edit", {"snippet_id": "draft-7", "old_str": "a", "new_str": "b"})
 
         text = result.content[0].text
         assert "Edit not applied" in text
         assert "ambiguous" in text
-        assert "unchanged" in text
+        assert "Nothing was changed" in text
 
     @pytest.mark.asyncio
     async def test_screenshot_re_renders_a_draft_by_id(self):

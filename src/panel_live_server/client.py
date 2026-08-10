@@ -121,26 +121,31 @@ class DisplayClient:
             logger.exception(f"Error creating visualization: {e}")
             raise RuntimeError(f"Failed to create visualization: {e}") from e
 
-    def edit_draft(self, draft_id: str, old_str: str, new_str: str) -> dict:
-        """Replace one occurrence of *old_str* with *new_str* in a stored draft.
+    def edit_snippet(self, snippet_id: str, old_str: str, new_str: str) -> dict:
+        """Replace one occurrence of *old_str* with *new_str* in a stored snippet.
 
         Lets an iteration send only what changed instead of the whole snippet
         again, which is where the output-token cost of a draft loop lives.
 
+        A draft is edited in place. A snippet the user has already been shown is
+        forked into a new draft carrying the change, so the live version does not
+        move under them; ``forked`` says which happened and ``id`` is the row to
+        screenshot next.
+
         Returns
         -------
         dict
-            ``{"id": str, "chars": int}`` on success, or ``{"error": ...,
-            "message": ...}`` describing why the edit was refused.
+            ``{"id": str, "chars": int, "forked": bool}`` on success, or
+            ``{"error": ..., "message": ...}`` describing why the edit was refused.
         """
         try:
             response = self.session.post(
-                f"{self.base_url}/api/draft/edit",
-                json={"draft_id": draft_id, "old_str": old_str, "new_str": new_str},
+                f"{self.base_url}/api/snippet/edit",
+                json={"snippet_id": snippet_id, "old_str": old_str, "new_str": new_str},
                 timeout=self.timeout,
             )
         except requests.RequestException as e:
-            logger.warning("Draft edit request error: %s", e)
+            logger.warning("Snippet edit request error: %s", e)
             return {"error": "RequestException", "message": f"Edit request failed: {e}"}
 
         try:

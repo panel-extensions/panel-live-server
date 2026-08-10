@@ -577,8 +577,11 @@ async def show(
             "image and answer from it. Do NOT recompute from the code or re-run the data "
             "— the rendered plot can differ from the raw data (row order, axis inversion, "
             "sorting, binning).\n"
-            "- If the user wants to MODIFY the visualization (change colors, add a "
-            "series, adjust layout, etc.), write the updated code and call `show` again."
+            f'- If the user wants to MODIFY it, call `edit("{snippet_id}", old_str, new_str)` '
+            "with just the part that changes. That forks it into a new draft rather than "
+            "altering what the user is looking at; screenshot the returned id, then "
+            "`show(draft_id=...)` to hand over the new version. Resend the whole snippet "
+            "only when the change touches most of the code."
         )
         _attach_token_count(payload)
         return json.dumps(payload)
@@ -678,59 +681,72 @@ async def evaluate(code: str, ctx: Context | None = None) -> str:
 
 @mcp.tool(name="edit")
 async def edit(
-    draft_id: str,
+    snippet_id: str,
     old_str: str,
     new_str: str = "",
     ctx: Context | None = None,
 ) -> str:
-    """Change part of a draft without resending the whole snippet.
+    """Change part of a visualization without resending the whole snippet.
 
-    Use this instead of calling `screenshot(code=...)` again with the full code
-    when you are adjusting something small — a colour, a title, a width, one line
-    of a layout. Rewriting a 200-line snippet to change one argument costs you
-    the entire snippet in output tokens, every round.
+    Use this instead of resending the full code when you are adjusting something
+    small — a colour, a title, a width, one line of a layout. Rewriting a 200-line
+    snippet to change one argument costs you the entire snippet in output tokens,
+    every round.
 
-    `old_str` must appear EXACTLY ONCE in the draft, matching character for
-    character including indentation. Drafts are stored exactly as you sent them,
-    so what you wrote is what is stored. If the string appears more than once,
-    include surrounding lines until it is unique.
+    `old_str` must appear EXACTLY ONCE, matching character for character including
+    indentation. Code is stored exactly as you sent it, so what you wrote is what
+    is stored. If the string appears more than once, include surrounding lines
+    until it is unique.
 
-    After editing, call `screenshot(draft_id=...)` to see the result — the edit
-    changes the stored code but does not re-render on its own.
+    Works on a draft and on something the user has already been shown:
 
-    Only drafts can be edited. Something already handed to the user via `show`
-    cannot be changed underneath them; write new code and call `show` again.
+    · A DRAFT is edited in place and the same id comes back.
+    · A SHOWN snippet is FORKED — a new draft is created carrying your change and
+      its id comes back, while the version the user is looking at does not move.
+      Showing the fork adds a new entry to their feed; the old one stays.
 
-    Typical loop:
-        `screenshot(code=...)` → `edit(draft_id, old, new)` →
-        `screenshot(draft_id=...)` → `show(draft_id=...)`
+    Either way the edit does not re-render on its own: `screenshot(draft_id=...)`
+    with the id you were given, then `show(draft_id=...)` when it looks right.
 
-    For a small snippet, or a change touching most of the code, just resend it
-    with `screenshot(code=...)` — that is fine and often simpler.
+    Typical loops:
+        building   → `screenshot(code=...)` → `edit(id, old, new)` →
+                     `screenshot(draft_id=...)` → `show(draft_id=...)`
+        user tweak → `show` returns an id → `edit(id, old, new)` →
+                     `screenshot(draft_id=<new id>)` → `show(draft_id=<new id>)`
+
+    For a small snippet, or a change touching most of the code, just resend it —
+    that is fine and often simpler.
 
     Parameters
     ----------
-    draft_id : str
-        Id of the draft to edit, as reported alongside its screenshot.
+    snippet_id : str
+        Id of the draft or shown visualization to change.
     old_str : str
-        Exact text to replace. Must occur exactly once in the draft.
+        Exact text to replace. Must occur exactly once.
     new_str : str, optional
         Replacement text. Omit to delete ``old_str``.
 
     Returns
     -------
     str
-        Confirmation, or an explanation of why the edit was refused.
+        Confirmation naming the id to screenshot next, or why the edit was refused.
     """
     await _ensure_client_ready(ctx)
 
-    result = await asyncio.to_thread(_client.edit_draft, draft_id, old_str, new_str)
+    result = await asyncio.to_thread(_client.edit_snippet, snippet_id, old_str, new_str)
 
     if message := result.get("message"):
-        # A refused edit is between you and the draft; the user has seen nothing.
-        return f"Edit not applied — {message}\n\nThe draft is unchanged. Fix the problem and try again, or resend the whole snippet with screenshot(code=...)."
+        # A refused edit is between you and the code; the user has seen nothing.
+        return f"Edit not applied — {message}\n\nNothing was changed. Fix the problem and try again, or resend the whole snippet with screenshot(code=...)."
 
-    return f'Draft {draft_id} updated ({result.get("chars", 0)} characters). Call screenshot(draft_id="{draft_id}") to see the result.'
+    new_id = result.get("id", snippet_id)
+    if result.get("forked"):
+        return (
+            f"Created draft {new_id} from {snippet_id} with your change applied. {snippet_id} is untouched, so the user still sees the old version. "
+            f'Call screenshot(draft_id="{new_id}") to check it, then show(draft_id="{new_id}") to hand over the new version.'
+        )
+
+    return f'Draft {snippet_id} updated ({result.get("chars", 0)} characters). Call screenshot(draft_id="{snippet_id}") to see the result.'
 
 
 @mcp.tool(name="screenshot")
@@ -822,7 +838,7 @@ async def screenshot(
 
     Typical loops:
         · building something  → `screenshot(code=...)` → revise → `screenshot(code=...)` → `show(draft_id=...)`
-        · small adjustment    → `edit(draft_id, old, new)` → `screenshot(draft_id=...)` → `show(draft_id=...)`
+        · small adjustment    → `edit(id, old, new)` → `screenshot(draft_id=...)` → `show(draft_id=...)`
         · visual follow-up    → `show` (returns id) → `screenshot(snippet_id=id)`
 
     Parameters

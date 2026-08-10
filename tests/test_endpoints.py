@@ -12,9 +12,9 @@ from tornado.web import Application
 import panel_live_server.endpoints as endpoints_module
 from panel_live_server import usage
 from panel_live_server.database import SnippetDatabase
-from panel_live_server.endpoints import DraftEditEndpoint
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import ScreenshotEndpoint
+from panel_live_server.endpoints import SnippetEditEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
 from panel_live_server.validation import SecurityError
 
@@ -491,8 +491,8 @@ class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
         assert promoted.app == "1 + 1\n"
 
 
-class TestDraftEditEndpoint(AsyncHTTPTestCase):
-    """POST /api/draft/edit changes a draft without the whole snippet being resent."""
+class TestSnippetEditEndpoint(AsyncHTTPTestCase):
+    """POST /api/snippet/edit changes stored code without the whole snippet being resent."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -507,7 +507,7 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
         self._tmp.cleanup()
 
     def get_app(self) -> Application:
-        return Application([(r"/api/draft/edit", DraftEditEndpoint)])
+        return Application([(r"/api/snippet/edit", SnippetEditEndpoint)])
 
     def _draft(self, code: str):
         # run_static=False: these tests are about editing, not about validation, and
@@ -515,8 +515,10 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
         return self.db.create_visualization(app=code, name="Draft", run_static=False, format=False, execute=False, draft=True)
 
     def _edit(self, **body) -> object:
+        # The endpoint keys on snippet_id: a shown snippet is editable now, so naming
+        # the parameter draft_id would describe only half of what it accepts.
         return self.fetch(
-            "/api/draft/edit",
+            "/api/snippet/edit",
             method="POST",
             body=json.dumps(body),
             headers={"Content-Type": "application/json"},
@@ -525,7 +527,7 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
     def test_single_occurrence_is_replaced(self) -> None:
         draft = self._draft("color = 'red'\nx = 1")
 
-        response = self._edit(draft_id=draft.id, old_str="'red'", new_str="'blue'")
+        response = self._edit(snippet_id=draft.id, old_str="'red'", new_str="'blue'")
 
         assert response.code == 200
         assert self.db.get_snippet(draft.id).app == "color = 'blue'\nx = 1"
@@ -534,16 +536,16 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
         """Echoing the snippet back would spend exactly what the edit just saved."""
         draft = self._draft("color = 'red'")
 
-        response = self._edit(draft_id=draft.id, old_str="'red'", new_str="'blue'")
+        response = self._edit(snippet_id=draft.id, old_str="'red'", new_str="'blue'")
 
         payload = json.loads(response.body.decode("utf-8"))
-        assert set(payload) == {"id", "chars"}
+        assert set(payload) == {"id", "chars", "forked"}
         assert payload["chars"] == len("color = 'blue'")
 
     def test_omitted_new_str_deletes(self) -> None:
         draft = self._draft("x = 1  # note\ny = 2")
 
-        response = self._edit(draft_id=draft.id, old_str="  # note")
+        response = self._edit(snippet_id=draft.id, old_str="  # note")
 
         assert response.code == 200
         assert self.db.get_snippet(draft.id).app == "x = 1\ny = 2"
@@ -552,7 +554,7 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
         """Silently editing the first of several matches is the wrong guess to make."""
         draft = self._draft("a = 1\nb = 1\n")
 
-        response = self._edit(draft_id=draft.id, old_str="= 1", new_str="= 2")
+        response = self._edit(snippet_id=draft.id, old_str="= 1", new_str="= 2")
 
         assert response.code == 400
         payload = json.loads(response.body.decode("utf-8"))
@@ -563,7 +565,7 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
     def test_missing_match_is_refused(self) -> None:
         draft = self._draft("x = 1")
 
-        response = self._edit(draft_id=draft.id, old_str="nope", new_str="y")
+        response = self._edit(snippet_id=draft.id, old_str="nope", new_str="y")
 
         assert response.code == 400
         assert json.loads(response.body.decode("utf-8"))["error"] == "NoMatch"
@@ -573,24 +575,47 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
         """Cheaper to say so here than to find out by launching Chromium."""
         draft = self._draft("x = (1 + 2)")
 
-        response = self._edit(draft_id=draft.id, old_str="(1 + 2)", new_str="(1 + 2")
+        response = self._edit(snippet_id=draft.id, old_str="(1 + 2)", new_str="(1 + 2")
 
         assert response.code == 400
         assert json.loads(response.body.decode("utf-8"))["error"] == "SyntaxError"
         assert self.db.get_snippet(draft.id).app == "x = (1 + 2)", "a refused edit must not land"
 
-    def test_shown_snippet_cannot_be_edited(self) -> None:
-        """Nothing should change under a user who is already looking at it."""
-        snippet = self.db.create_visualization(app="x = 1", run_static=False, format=False, execute=False, draft=False)
+    def test_editing_a_shown_snippet_forks_it_instead(self) -> None:
+        """Nothing should change under a user who is already looking at it.
 
-        response = self._edit(draft_id=snippet.id, old_str="1", new_str="2")
+        Refusing outright honoured that rule but wasted the call: the common shape
+        is show → "tweak this", and the model had to resend the whole snippet. The
+        edit now lands on a fresh draft, so the live row is still untouched.
+        """
+        snippet = self.db.create_visualization(app="x = 1", name="Chart", run_static=False, format=False, execute=False, draft=False)
 
-        assert response.code == 400
-        assert "already been shown" in json.loads(response.body.decode("utf-8"))["message"]
-        assert self.db.get_snippet(snippet.id).app == "x = 1"
+        response = self._edit(snippet_id=snippet.id, old_str="1", new_str="2")
 
-    def test_unknown_draft_is_404(self) -> None:
-        response = self._edit(draft_id="nope", old_str="a", new_str="b")
+        assert response.code == 200
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["forked"] is True
+        assert payload["id"] != snippet.id
+
+        assert self.db.get_snippet(snippet.id).app == "x = 1", "the shown snippet must not move"
+
+        fork = self.db.get_snippet(payload["id"])
+        assert fork.app == "x = 2"
+        assert fork.draft is True, "the fork must stay out of the feed until it is shown"
+        assert fork.name == "Chart", "a forked version belongs to the same visualization"
+
+    def test_editing_a_draft_reports_no_fork(self) -> None:
+        """In-place edits must be distinguishable, or the model screenshots the wrong id."""
+        draft = self._draft("x = 1")
+
+        response = self._edit(snippet_id=draft.id, old_str="1", new_str="2")
+
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["forked"] is False
+        assert payload["id"] == draft.id
+
+    def test_unknown_snippet_is_404(self) -> None:
+        response = self._edit(snippet_id="nope", old_str="a", new_str="b")
 
         assert response.code == 404
 
@@ -598,7 +623,7 @@ class TestDraftEditEndpoint(AsyncHTTPTestCase):
         """Editing writes an indexed column, so the FTS triggers fire on this path."""
         draft = self._draft("import pandas")
 
-        self._edit(draft_id=draft.id, old_str="pandas", new_str="numpy")
+        self._edit(snippet_id=draft.id, old_str="pandas", new_str="numpy")
 
         assert self.db.search_snippets("numpy") == []
         assert [s.id for s in self.db.search_snippets("numpy", include_drafts=True)] == [draft.id]
