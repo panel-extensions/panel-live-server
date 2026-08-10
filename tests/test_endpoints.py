@@ -487,8 +487,9 @@ class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
         assert promoted.name == "Final"
         assert [s.id for s in self.db.list_snippets()] == [draft_id]
         assert [s.id for s in self.db.search_snippets("Final")] == [draft_id]
-        # Stored verbatim as a draft, formatted only now.
-        assert promoted.app == "1 + 1\n"
+        # Stored byte-identical to what was sent, at every stage. Reformatting here
+        # would silently break a later old_str edit against this snippet.
+        assert promoted.app == "1+1"
 
 
 class TestSnippetEditEndpoint(AsyncHTTPTestCase):
@@ -655,9 +656,22 @@ class TestSnippetGet(AsyncHTTPTestCase):
 
         assert response.code == 200
         payload = json.loads(response.body.decode("utf-8"))
-        assert payload["code"] == "x = 1"
+        assert payload["code"].strip() == "x = 1"
         assert payload["name"] == "Chart"
         assert payload["id"] == snippet.id
+
+    def test_code_is_formatted_on_read_but_stored_verbatim(self) -> None:
+        """Humans get tidy code; the stored text stays matchable by old_str.
+
+        Formatting at storage is what made an edit against a shown snippet miss:
+        the author matches what it wrote, the row holds what ruff produced.
+        """
+        snippet = self.db.create_visualization(app="x=1+2", run_static=False, format=False, execute=False)
+
+        payload = json.loads(self.fetch(f"/api/snippet?id={snippet.id}").body.decode("utf-8"))
+
+        assert payload["code"] == "x = 1 + 2\n", "the panel should show formatted code"
+        assert self.db.get_snippet(snippet.id).app == "x=1+2", "storage must not be reformatted"
 
     def test_is_readable_cross_origin(self) -> None:
         """show.html runs on the host's origin, not this server's, so it needs CORS.

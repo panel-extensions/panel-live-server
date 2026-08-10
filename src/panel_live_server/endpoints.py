@@ -24,6 +24,7 @@ from panel_live_server.utils import execute_in_module
 from panel_live_server.utils import extract_last_expression
 from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ast_check
+from panel_live_server.validation import ruff_format
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,11 @@ class SnippetEndpoint(RequestHandler):
         That echo was paid on every call, in the model's context, to populate a
         panel the user opens rarely — so the code is fetched here instead, when
         it is actually looked at.
+
+        The code is formatted on the way out rather than on the way in. Storage
+        stays byte-identical to what the author sent, so ``old_str`` edits keep
+        matching, while a human opening the panel still sees tidy code. This runs
+        only when the panel is actually opened, so the cost is paid by the click.
         """
         snippet_id = self.get_argument("id", "")
         if not snippet_id:
@@ -80,7 +86,7 @@ class SnippetEndpoint(RequestHandler):
         self.write(
             {
                 "id": snippet.id,
-                "code": snippet.app,
+                "code": ruff_format(snippet.app),
                 "name": snippet.name,
                 "description": snippet.description,
                 "method": snippet.method,
@@ -119,13 +125,17 @@ class SnippetEndpoint(RequestHandler):
                 usage.record("show", len(code))
                 # `validated` says the caller already ran the static layers itself.
                 # Kept as one flag on the wire; the three-way split is server-side.
+                #
+                # format=False regardless: an agent may edit this snippet later by
+                # string match, and reformatting on the way in is what makes that
+                # miss. Formatting is applied when the code is read for display.
                 snippet = db.create_visualization(
                     app=code,
                     name=name,
                     description=description,
                     method=method,
                     run_static=not validated,
-                    format=not validated,
+                    format=False,
                     execute=not validated,
                 )
 

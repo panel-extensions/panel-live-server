@@ -569,8 +569,10 @@ class SnippetDatabase:
         Running it again here would reinstate the second execution this whole path
         exists to remove.
 
-        Formatting happens now rather than at storage, because a draft is kept
-        verbatim while an agent may still be editing it by string match.
+        Nothing is reformatted. Stored code stays byte-identical to what the
+        caller sent, so a later ``old_str`` edit matches what the author holds;
+        formatting is applied when code is *read* for a human instead (the code
+        panel and the feed).
 
         Parameters
         ----------
@@ -603,7 +605,6 @@ class SnippetDatabase:
 
         self.update_snippet(
             snippet_id,
-            app=ruff_format(snippet.app),
             name=name,
             description=description,
             draft=False,
@@ -675,10 +676,12 @@ class SnippetDatabase:
             can turn this off rather than pay for them twice. The web ``/add``
             form leaves it on so untrusted input is still fully checked.
         format : bool, optional
-            Autoformat with ``ruff format`` before storing. Turned off for drafts
-            so the stored text matches the text the model holds character for
-            character; a reformat between the two is what makes a subsequent
-            ``old_str`` edit miss. Formatting happens at promotion instead.
+            Autoformat with ``ruff format`` before storing. Off for anything an
+            agent may later edit by string match — a reformat between what the
+            author holds and what is stored is what makes ``old_str`` miss for
+            reasons nobody can see. The web ``/add`` form leaves it on, since a
+            human pasting code is not going to string-match against it later.
+            Code is formatted when read for display, not on the way in.
         execute : bool, optional
             Run the snippet once here to populate ``status`` and
             ``error_message``. This is what lets ``show`` catch a runtime failure
