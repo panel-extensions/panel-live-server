@@ -20,6 +20,7 @@ required for local use.
 | Host | `localhost` | Server host address |
 | Database | `~/.panel-live-server/snippets/snippets.db` | SQLite database path |
 | Max restarts | `3` | Maximum automatic restarts on failure |
+| Draft retention | `24` hours | How long a draft the AI has not shown you is kept before being swept. Set with `PANEL_LIVE_SERVER_DRAFT_RETENTION_HOURS`. |
 | AI instructions | built-in | Prompts sent to the AI in MCP mode. Override per section with `pls mcp --prompts <file>`. |
 
 ---
@@ -35,6 +36,7 @@ export PANEL_LIVE_SERVER_PORT=9999
 export PANEL_LIVE_SERVER_HOST=127.0.0.1
 export PANEL_LIVE_SERVER_DB_PATH=/data/my-snippets.db
 export PANEL_LIVE_SERVER_MAX_RESTARTS=5
+export PANEL_LIVE_SERVER_DRAFT_RETENTION_HOURS=24
 ```
 
 **Windows (PowerShell):**
@@ -251,7 +253,7 @@ Every section can be customised:
 | Section | What it covers |
 | --- | --- |
 | `intro` | The one-line description of what the server does |
-| `workflow` | How `show` and `screenshot` relate, and that validation is automatic |
+| `workflow` | How `show`, `screenshot`, `edit`, and `evaluate` relate, and that validation is automatic |
 | `file_policy` | Not writing visualization code out to files |
 | `library_selection` | Which plotting libraries the AI should reach for |
 | `rendering` | Panel reactive patterns, and clients that link out instead of embedding |
