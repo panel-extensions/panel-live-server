@@ -98,7 +98,7 @@ class Config(BaseModel):
         default=4,
         description="Max viewport-sized images one full_page capture returns; a count of screens is a limit that means something, a pixel height is not",
     )
-    screenshot_max_pages: int = Field(default=12, description="Max pages of a multipage dashboard captured by a single all-pages screenshot")
+    screenshot_max_actions: int = Field(default=20, description="Max steps a single 'do' script may contain, as a backstop against a runaway script")
     brief_error_max_len: int = Field(default=140, description="Max length of the one-line error shown on the render-failed strip")
     diagnostics_max_chars: int = Field(
         default=4000,
@@ -134,7 +134,7 @@ def get_config() -> Config:
             screenshot_settle_ms=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_SETTLE_MS", "1200")),
             screenshot_timeout_ms=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_TIMEOUT_MS", "30000")),
             screenshot_max_tiles=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_MAX_TILES", "4")),
-            screenshot_max_pages=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_MAX_PAGES", "12")),
+            screenshot_max_actions=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_MAX_ACTIONS", "20")),
             brief_error_max_len=int(os.getenv("PANEL_LIVE_SERVER_BRIEF_ERROR_MAX_LEN", "140")),
             chars_per_token=int(os.getenv("PANEL_LIVE_SERVER_CHARS_PER_TOKEN", "4")),
             diagnostics_max_chars=int(os.getenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CHARS", "4000")),

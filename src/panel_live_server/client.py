@@ -6,6 +6,7 @@ or a remote server instance.
 """
 
 import base64
+import json
 import logging
 
 import requests  # type: ignore[import-untyped]
@@ -144,7 +145,7 @@ class DisplayClient:
         width: int | None = None,
         height: int | None = None,
         full_page: bool = False,
-        page: str = "",
+        do: list | None = None,
     ) -> ScreenshotResult:
         """Fetch a screenshot of a snippet's rendered ``/view`` page.
 
@@ -154,7 +155,9 @@ class DisplayClient:
             ``(capture, None, diagnostics)`` on success, or
             ``(None, error_message, {})`` on failure.
         """
-        params: dict[str, str | int] = {"id": snippet_id, "full_page": str(full_page).lower(), "page": page}
+        # A query string cannot carry a list, so `do` rides as JSON text — the
+        # server decodes it back on the way in.
+        params: dict[str, str | int] = {"id": snippet_id, "full_page": str(full_page).lower(), "do": json.dumps(do) if do else ""}
         if width:
             params["width"] = width
         if height:
@@ -171,7 +174,7 @@ class DisplayClient:
         width: int | None = None,
         height: int | None = None,
         full_page: bool = False,
-        page: str = "",
+        do: list | None = None,
     ) -> ScreenshotResult:
         """Render *code* and return a screenshot of it without keeping the snippet.
 
@@ -185,13 +188,13 @@ class DisplayClient:
             ``(capture, None, diagnostics)`` on success, or
             ``(None, error_message, {})`` on failure.
         """
-        payload: dict[str, str | int | bool] = {
+        payload: dict[str, str | int | bool | list | None] = {
             "code": code,
             "name": name,
             "description": description,
             "method": method,
             "full_page": full_page,
-            "page": page,
+            "do": do,
         }
         if width:
             payload["width"] = width

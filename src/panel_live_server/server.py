@@ -655,7 +655,7 @@ async def screenshot(
     width: int = 1200,
     height: int = 800,
     full_page: bool = False,
-    page: str = "",
+    do: list[dict] | None = None,
     ctx: Context | None = None,
 ) -> ToolResult:
     """See a visualization as a PNG — returns the image to you (the LLM), not to the user.
@@ -720,22 +720,46 @@ async def screenshot(
     above — rendered output and raw data frequently disagree).
 
     ════════════════════════════════════════════════════════════════════════
-    TALL DASHBOARDS AND MULTIPAGE DASHBOARDS:
+    DRIVING THE APP BEFORE YOU LOOK:
     ════════════════════════════════════════════════════════════════════════
-    By default you get one screen: what a user sees on load. A page taller than
-    the window, and any tab you did not open, are missing from that picture the
-    same silent way an empty chart is — so the reply TELLS you when there is
-    more, naming the tabs it found and how many screens of content there are.
+    By default you get one screen exactly as it loaded: nothing clicked, nothing
+    scrolled. A page taller than the window, and anything that only appears
+    after an interaction, are missing from that picture the same silent way an
+    empty chart is — so the reply TELLS you what is on the page and whether
+    content continues past the fold.
 
     Read that line and decide. You know the question; this tool does not.
-      · `full_page=True`   → the whole scrollable page, as a few readable
-                             screen-sized images rather than one shrunken strip
-      · `page="Sales"`     → that tab (a label or a 0-based index)
-      · `page="all"`       → every tab, for a whole-dashboard review
+      · `full_page=True` → the whole scrollable page, as a few readable
+                            screen-sized images rather than one shrunken strip
+      · `do=[...]`        → a short script run before the picture is taken:
 
-    Ask for one tab, not all of them, when you only care about one. Only
-    `pn.Tabs` counts as pages; navigation hand-built from a Select or a Button
-    is not clicked for you, because clicking it would run the user's code.
+    ```
+    do=[{"click": "Reports"}]                                 # open a tab
+    do=[{"select": "Region", "value": "West"}]                # pick a dropdown option
+    do=[{"fill": "Search", "value": "acme"}, {"key": "Enter"}] # type, then submit
+    do=[{"click": "Box Zoom"}, {"drag": [300, 200, 500, 350]}] # zoom into a plot
+    ```
+
+    Each step names what to act on — the text on it, its tooltip, or its label —
+    not a CSS selector, and not a widget type. This reaches anything: a `Tabs`
+    strip, a `Button`, a `Select`, a `RadioButtonGroup`, or a Bokeh toolbar icon
+    (icons carry no visible text, only a tooltip — `"click": "Box Zoom"` finds
+    one by that tooltip). Steps run in order, each settling before the next.
+
+    `{"drag": [x0, y0, x1, y1]}` is viewport pixels, not a name — the one step
+    for a canvas or a plot region that has nothing to click by name. A crowded
+    scatter plot rendered with datashader often needs exactly this: click the
+    plot's "Box Zoom" tool, then drag a box over the crowded area, to see
+    whether the individual points resolve once zoomed. The tool is not active
+    by default — clicking it first is part of the script, not optional.
+
+    A step that matches nothing, or matches more than one thing, is refused
+    before any picture is taken, and the message names what IS on the page —
+    read it and try again with a more specific name.
+
+    Nothing is clicked unless you name it. A `Select` wired to filter data and
+    a `Select` wired to switch pages look identical until you act on one; this
+    tool never decides that for you.
 
     WHEN TO USE — a follow-up question about an already-shown visualization that
     can only be answered by seeing it (random/dynamic data, or visual position):
@@ -771,17 +795,17 @@ async def screenshot(
     full_page : bool, default False
         Capture the whole scrollable page instead of the visible screen. Comes
         back as several screen-sized images, each readable at native scale.
-    page : str, default ""
-        Which page of a multipage dashboard to capture. Default captures
-        whichever one is showing; pass a tab label or 0-based index for one
-        specific page, or ``"all"`` for every page.
+    do : list[dict], optional
+        Steps to perform before capturing, in order — click, select, fill, press
+        a key, drag, or wait. See "DRIVING THE APP BEFORE YOU LOOK" above for
+        the shape of each step. Nothing is clicked unless listed here.
 
     Returns
     -------
     Image
         PNG screenshot of the rendered visualization — one per screen when
-        ``full_page`` is set, one per page when ``page="all"`` — plus a note
-        naming anything on the page the images do not show.
+        ``full_page`` is set — plus a note naming what else is on the page and
+        whether content continues past the fold.
     """
     if not snippet_id and not code:
         raise ToolError("Pass code=... to screenshot a draft, or snippet_id=... to screenshot a visualization show() already returned.")
@@ -796,7 +820,9 @@ async def screenshot(
         if not validation["valid"]:
             return _draft_failure(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
-        capture, error, captured = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height, full_page, page)
+        capture, error, captured = await asyncio.to_thread(
+            _client.screenshot_code, code, name=name, method=method, width=width, height=height, full_page=full_page, do=do
+        )
         if error and error.startswith(BROWSER_UNAVAILABLE_PREFIX):
             # No amount of rewriting fixes a missing browser — surface it instead of looping.
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
@@ -806,7 +832,7 @@ async def screenshot(
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.
-        capture, error, captured = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height, full_page, page)
+        capture, error, captured = await asyncio.to_thread(_client.get_screenshot, snippet_id, width=width, height=height, full_page=full_page, do=do)
         if error:
             raise ToolError(f"Screenshot failed: {error}")
         reminder = render_prompt(SCREENSHOT, "shown_image")
@@ -837,29 +863,29 @@ async def screenshot(
 
 
 def _capture_report(capture: Capture) -> str:
-    """Name what is on the page but not in the images, if anything.
+    """Name what could be acted on, and what is not in the images, if anything.
 
-    A tab that was not opened, and content past the fold, are absent from a
+    A control never clicked, and content past the fold, are absent from a
     screenshot in exactly the way an empty chart is — silently. Nothing in a
-    rectangle of pixels says "there is more". So the browser is asked, and the
-    answer is written down beside the picture.
+    rectangle of pixels says "there is more" or "there is a Box Zoom tool here".
+    So the browser is asked, and the answer is written down beside the picture.
 
     Both facts are read off the loaded page for the price of two locator calls,
     which is why this runs on every capture rather than being something to opt
     into. What to *do* about it is the model's call, not ours: it knows the
-    question being asked and can tell "is the top chart blue?" from "review my
-    dashboard". Hence a report, not more images.
+    question being asked and can tell "is the top chart blue?" from "zoom in and
+    check if the points resolve". Hence a report, not more images.
 
-    Returns ``""`` when the images already show everything — the common case
-    for an ordinary chart, which should cost no extra words at all.
+    Returns ``""`` when there is nothing to add — the common case for an
+    ordinary static chart, which should cost no extra words at all.
     """
     notes = []
 
-    if unseen := capture.unseen_pages:
-        seen = ", ".join(capture.captured_pages) or "none of them"
+    if capture.controls:
+        example = capture.controls[0]
         notes.append(
-            f"PAGES: this dashboard has {len(capture.available_pages)} — {', '.join(capture.available_pages)}. "
-            f"You have seen: {seen}. For another, call screenshot(page='{unseen[0]}'); for every one, page='all'."
+            f"CONTROLS: {', '.join(capture.controls)}. "
+            f"""Call screenshot(do=[{{"click": "{example}"}}]) to act on one."""
         )
 
     if capture.total_tiles > capture.captured_tiles:

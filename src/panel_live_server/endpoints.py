@@ -143,16 +143,16 @@ class ScreenshotEndpoint(RequestHandler):
     full_page : bool
         Capture the whole scrollable page as a run of viewport-sized tiles
         rather than the single visible screen. Defaults to false.
-    page : str
-        Which page of a multipage dashboard to capture: unset for whichever is
-        showing, ``all`` for every one, or a tab label or 0-based index.
+    do : str (GET, JSON-encoded) / list (POST)
+        Steps to perform before capturing — see :func:`screenshot.capture_pages`.
+        Unset means nothing is clicked; the page is captured as it loaded.
 
     A single capture comes back as ``image/png``. Anything that produced more
-    than one image — several tiles, several pages — comes back as JSON instead,
+    than one image — several tiles of a tall page — comes back as JSON instead,
     one base64 PNG per image, because there is no honest way to put several
     images in one image body. Either way the ``X-PLS-Capture`` header reports
-    what was *not* returned: the dashboard's page labels, and how many tiles the
-    content actually needs.
+    what was *not* returned: the controls found on the page, and how many tiles
+    the content actually needs.
     """
 
     def _error(self, status: int, message: str, error: str | None = None) -> None:
@@ -172,12 +172,21 @@ class ScreenshotEndpoint(RequestHandler):
             self._error(404, f"Snippet {snippet_id} not found")
             return
 
+        # A query string cannot carry a list, so ``do`` travels as JSON text here
+        # — the one place GET and POST genuinely differ.
+        raw_do = self.get_argument("do", "")
+        try:
+            do = json.loads(raw_do) if raw_do else None
+        except ValueError:
+            self._error(400, 'do must be JSON-encoded, e.g. do=[{"click": "Reports"}]', error="ActionError")
+            return
+
         await self._capture(
             snippet_id,
             width=self.get_argument("width", ""),
             height=self.get_argument("height", ""),
             full_page=self.get_argument("full_page", "false"),
-            page=self.get_argument("page", ""),
+            do=do,
         )
 
     async def post(self):
@@ -220,12 +229,12 @@ class ScreenshotEndpoint(RequestHandler):
                 width=str(body.get("width", "")),
                 height=str(body.get("height", "")),
                 full_page=str(body.get("full_page", False)),
-                page=str(body.get("page", "")),
+                do=body.get("do"),
             )
         finally:
             db.delete_snippet(snippet.id)
 
-    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str, page: str = "") -> None:
+    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str, do: list | None = None) -> None:
         """Screenshot ``/view?id=<snippet_id>`` and write the PNG to the response."""
         config = get_config()
         try:
@@ -246,9 +255,9 @@ class ScreenshotEndpoint(RequestHandler):
                 full_page=full_page.lower() in ("1", "true", "yes"),
                 settle_ms=config.screenshot_settle_ms,
                 timeout_ms=config.screenshot_timeout_ms,
-                select=page,
+                do=do,
                 max_tiles=config.screenshot_max_tiles,
-                max_pages=config.screenshot_max_pages,
+                max_actions=config.screenshot_max_actions,
                 console_sink=console_lines,
             )
         except screenshot.PlaywrightUnavailableError as e:
@@ -256,11 +265,12 @@ class ScreenshotEndpoint(RequestHandler):
             self.set_header("Content-Type", "application/json")
             self.write({"error": "PlaywrightUnavailable", "message": str(e)})
             return
-        except screenshot.UnknownPageError as e:
-            # The caller named a page that isn't there — they can fix that, so
-            # say which pages exist. Deliberately not a bare ``ValueError``:
-            # that would report our own bugs as the caller's mistake.
-            self._error(400, str(e), error="UnknownPageError")
+        except screenshot.ActionError as e:
+            # A step in `do` was malformed or named something the page does not
+            # have — the caller can fix that, so say what is actually there.
+            # Deliberately not a bare ``ValueError``: that would report our own
+            # bugs as the caller's mistake.
+            self._error(400, str(e), error="ActionError")
             return
         except Exception as e:
             logger.exception(f"Error capturing screenshot for snippet {snippet_id}")
