@@ -384,6 +384,12 @@ def _build_frame_domains() -> list[str]:
                 "https://cdn.jsdelivr.net",
                 "https://cdn.plot.ly",
             ],
+            # The App fetches a snippet's code from the Panel server when the code
+            # panel is opened, rather than being handed it in the payload (issue #58).
+            # That is an XHR, so it needs connect-src: resource_domains only covers
+            # script/img/style/font, and listing the origin there left the fetch
+            # blocked with nothing but "Failed to fetch" to go on.
+            connect_domains=_build_frame_domains(),
             frame_domains=_build_frame_domains(),
         )
     ),
@@ -423,11 +429,12 @@ async def _ensure_client_ready(ctx: Context | None) -> None:
 
 @mcp.tool(name="show", app=AppConfig(resource_uri=SHOW_RESOURCE_URI))
 async def show(
-    code: str,
+    code: str = "",
     name: str = "",
     description: str = "",
     method: Literal["inline", "server"] = "inline",
     zoom: int = 75,
+    draft_id: str = "",
     ctx: Context | None = None,
 ) -> str:
     """Display Python code as a live, interactive visualization.
@@ -444,7 +451,13 @@ async def show(
     in front of the user. To check your own output first, call
     ``screenshot(code=...)`` instead — that renders the code and returns the
     picture to you alone, with nothing appearing in the chat or the user's feed.
-    Iterate there as long as you need, then call ``show`` once at the end.
+    Iterate there as long as you need, then finish with ``show``.
+
+    IMPORTANT — if you reached the final version through ``screenshot(code=...)``,
+    call ``show(draft_id=...)`` with the draft id that screenshot reported, NOT
+    ``show(code=...)`` with the code pasted again. The draft has already been
+    rendered and checked, so promoting it costs nothing and cannot introduce a
+    difference between what you looked at and what the user gets.
 
     IMPORTANT — pass the Python code DIRECTLY as the ``code`` argument. Do NOT
     write it to a file in the user's project first, do NOT create scripts,
@@ -461,7 +474,7 @@ async def show(
     Parameters
     ----------
     code : str
-        Python code to execute.
+        Python code to execute. Omit when promoting with ``draft_id``.
         For ``"inline"`` method: the last expression is displayed. It must be
         fully dedented (no leading whitespace on top-level statements).
         For ``"server"`` method: call ``.servable()`` on objects to display.
@@ -480,6 +493,11 @@ async def show(
     zoom : {100, 75, 50, 25}, default 75
         Initial zoom level for the preview pane. 75 fits most charts and
         dashboards. Use 50 for full-page templates, 25 for very wide apps.
+    draft_id : str, optional
+        Id of a draft from ``screenshot(code=...)`` to hand to the user as-is.
+        The draft has already rendered successfully in a real browser, so this
+        neither re-validates nor re-executes it — use it instead of resending the
+        code whenever you have been iterating with ``screenshot``.
 
     Returns
     -------
@@ -487,6 +505,9 @@ async def show(
         JSON payload for MCP App rendering, including the visualization URL.
     """
     global _manager, _client
+
+    if not code and not draft_id:
+        raise ToolError("Pass code=... to show new code, or draft_id=... to show a draft you already screenshotted.")
 
     client_name = _get_mcp_client_name(ctx)
     # Claude Desktop (frame-src CSP) and Cowork (sandboxed iframe) cannot reach the live server, so they get an "Open in browser" button, not an inline preview.
@@ -502,9 +523,12 @@ async def show(
         return _retry_payload(name=name, description=description, method=method, zoom=zoom, layer=layer, error_detail=detail)
 
     # Static validation failure: return a quiet retry payload (not a loud error) so the App pane shows a friendly "Refining…" state while the model fixes the code.
-    validation = _run_validation(code, method)
-    if not validation["valid"]:
-        return _retry(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
+    # Skipped when promoting: the draft already rendered under a real browser,
+    # which is a stronger check than anything repeated here.
+    if not draft_id:
+        validation = _run_validation(code, method)
+        if not validation["valid"]:
+            return _retry(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
     try:
         response = _client.create_snippet(
@@ -513,7 +537,14 @@ async def show(
             description=description,
             method=method,
             validated=False,
+            draft_id=draft_id,
         )
+
+        # A rejected promotion (stale, already shown, or last rendered badly) is
+        # the model's to recover from, not the user's to see.
+        if error_name := response.get("error"):
+            return _retry("promotion" if draft_id else "render", response.get("message") or error_name)
+
         url = _externalize_url(response.get("url", ""))
 
         # Runtime failure: the code ran and raised — same quiet retry treatment, hand the traceback to the model, show no error box.
@@ -527,7 +558,11 @@ async def show(
             "method": method,
             "zoom": zoom,
             "url": url,
-            "code": code,
+            # The code itself is deliberately NOT echoed here (issue #58). It was
+            # the largest field in a message the model re-reads in full, spent to
+            # populate a panel the user opens rarely. The App fetches it from
+            # GET /api/snippet?id= when the code panel is actually opened.
+            "id": response.get("id", ""),
         }
 
         snippet_id = response.get("id", "")
@@ -545,8 +580,10 @@ async def show(
             "image and answer from it. Do NOT recompute from the code or re-run the data "
             "— the rendered plot can differ from the raw data (row order, axis inversion, "
             "sorting, binning).\n"
-            "- If the user wants to MODIFY the visualization (change colors, add a "
-            "series, adjust layout, etc.), write the updated code and call `show` again."
+            f'- If the user wants to MODIFY it, call `edit("{snippet_id}", old_str, new_str)` '
+            "with just the part that changes. That forks it into a new draft, runs it, and "
+            "returns the new id — pass that to `show(draft_id=...)` to hand over the new "
+            "version. Resend the whole snippet only when the change touches most of the code."
         )
         _attach_token_count(payload)
         return json.dumps(payload)
@@ -644,10 +681,84 @@ async def evaluate(code: str, ctx: Context | None = None) -> str:
     return "\n".join(sections) if sections else "(no output)"
 
 
+@mcp.tool(name="edit")
+async def edit(
+    snippet_id: str,
+    old_str: str,
+    new_str: str = "",
+    ctx: Context | None = None,
+) -> str:
+    """Change part of a visualization without resending the whole snippet.
+
+    Use this instead of resending the full code when you are adjusting something
+    small — a colour, a title, a width, one line of a layout. Rewriting a 200-line
+    snippet to change one argument costs you the entire snippet in output tokens,
+    every round.
+
+    `old_str` must appear EXACTLY ONCE, matching character for character including
+    indentation. Code is stored exactly as you sent it, so what you wrote is what
+    is stored. If the string appears more than once, include surrounding lines
+    until it is unique.
+
+    Works on a draft and on something the user has already been shown:
+
+    · A DRAFT is edited in place and the same id comes back.
+    · A SHOWN snippet is FORKED — a new draft is created carrying your change and
+      its id comes back, while the version the user is looking at does not move.
+      Showing the fork adds a new entry to their feed; the old one stays.
+
+    Either way the edited code is run before this returns, so the id you get back
+    is ready to hand over: `show(draft_id=...)` directly. Screenshot it first only
+    if you need to SEE the change — a layout you are unsure of, not a colour you
+    named.
+
+    Typical loops:
+        user tweak → `show` returns an id → `edit(id, old, new)` → `show(draft_id=<new id>)`
+        unsure     → `edit(id, old, new)` → `screenshot(draft_id=<new id>)` → `show(draft_id=<new id>)`
+
+    For a small snippet, or a change touching most of the code, just resend it —
+    that is fine and often simpler.
+
+    Parameters
+    ----------
+    snippet_id : str
+        Id of the draft or shown visualization to change.
+    old_str : str
+        Exact text to replace. Must occur exactly once.
+    new_str : str, optional
+        Replacement text. Omit to delete ``old_str``.
+
+    Returns
+    -------
+    str
+        Confirmation naming the id to show next, or why the edit was refused.
+    """
+    await _ensure_client_ready(ctx)
+
+    result = await asyncio.to_thread(_client.edit_snippet, snippet_id, old_str, new_str)
+
+    if message := result.get("message"):
+        # A refused edit is between you and the code; the user has seen nothing.
+        return f"Edit not applied — {message}\n\nNothing was changed. Fix the problem and try again, or resend the whole snippet with screenshot(code=...)."
+
+    new_id = result.get("id", snippet_id)
+    if result.get("forked"):
+        return (
+            f"Created draft {new_id} from {snippet_id} with your change applied, and it runs. {snippet_id} is untouched, so the user still sees the old version. "
+            f'Call show(draft_id="{new_id}") to hand over the new version — screenshot it first only if you need to see the change.'
+        )
+
+    return (
+        f'Draft {snippet_id} updated ({result.get("chars", 0)} characters) and it runs. show(draft_id="{snippet_id}") when ready, or '
+        f'screenshot(draft_id="{snippet_id}") first if you need to see it.'
+    )
+
+
 @mcp.tool(name="screenshot")
 async def screenshot(
     snippet_id: str = "",
     code: str = "",
+    draft_id: str = "",
     name: str = "",
     method: Literal["inline", "server"] = "inline",
     width: int = 1200,
@@ -664,14 +775,19 @@ async def screenshot(
        Renders the code and returns the picture to you alone. Nothing is added to
        the chat and nothing is added to the user's feed. Use it to look at a
        draft, fix what is wrong, and look again — as many rounds as you need.
-       When it finally looks right, call `show(code=...)` once to hand the
-       finished visualization to the user.
+       When it finally looks right, call `show(draft_id=...)` once, passing the
+       draft id reported alongside the image, to hand that exact draft to the
+       user. Do not paste the code into `show` again.
 
        Do NOT call `show` just to get a `snippet_id` to screenshot. That puts
        every half-finished draft in front of the user, which is exactly what this
        parameter exists to prevent.
 
-    2. `screenshot(snippet_id=...)` — LOOK AT SOMETHING THE USER ALREADY HAS.
+    2. `screenshot(draft_id=...)` — LOOK AT A DRAFT AGAIN AFTER EDITING IT.
+       Re-renders a draft you already have, picking up any `edit` calls made
+       since. Still yours alone; nothing reaches the user.
+
+    3. `screenshot(snippet_id=...)` — LOOK AT SOMETHING THE USER ALREADY HAS.
        Pass the `snippet_id` that `show` returned. Use it to answer a follow-up
        question about how an already-shown visualization LOOKS. It does not
        create or modify anything.
@@ -726,7 +842,8 @@ async def screenshot(
         · any chart        → "what color is X?", "what does the legend say?"
 
     Typical loops:
-        · building something  → `screenshot(code=...)` → revise → `screenshot(code=...)` → `show(code=...)`
+        · building something  → `screenshot(code=...)` → revise → `screenshot(code=...)` → `show(draft_id=...)`
+        · small adjustment    → `edit(id, old, new)` → `show(draft_id=<new id>)`
         · visual follow-up    → `show` (returns id) → `screenshot(snippet_id=id)`
 
     Parameters
@@ -734,9 +851,12 @@ async def screenshot(
     snippet_id : str, optional
         Id of an already-shown visualization, as returned by `show`.
     code : str, optional
-        Python code for a draft the user has not seen. Rendered, captured, and
-        discarded — it never reaches the chat or the feed. Takes precedence if
-        both this and ``snippet_id`` are given.
+        Python code for a draft the user has not seen. Rendered and captured
+        without ever reaching the chat or the feed, and kept as a draft so
+        ``show(draft_id=...)`` can hand it over unchanged. Takes precedence if
+        several of these are given.
+    draft_id : str, optional
+        Id of an existing draft to re-render, typically after ``edit``.
     name : str, optional
         Short display name for the draft. Only used with ``code``.
     method : {"inline", "server"}, default "inline"
@@ -752,8 +872,11 @@ async def screenshot(
     Image
         PNG screenshot of the rendered visualization.
     """
-    if not snippet_id and not code:
-        raise ToolError("Pass code=... to screenshot a draft, or snippet_id=... to screenshot a visualization show() already returned.")
+    if not snippet_id and not code and not draft_id:
+        raise ToolError(
+            "Pass code=... to screenshot a new draft, draft_id=... to re-render one you already have, or snippet_id=... "
+            "to screenshot a visualization show() already returned."
+        )
 
     await _ensure_client_ready(ctx)
 
@@ -765,13 +888,25 @@ async def screenshot(
         if not validation["valid"]:
             return _draft_failure(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
-        png, error, captured = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height)
+        png, error, captured, new_draft_id = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height)
         if error and error.startswith(BROWSER_UNAVAILABLE_PREFIX):
             # No amount of rewriting fixes a missing browser — surface it instead of looping.
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
         if error:
             return _draft_failure("render", error)
         reminder = render_prompt(SCREENSHOT, "draft_review")
+        if new_draft_id:
+            # Appended rather than templated in, so the id travels with the
+            # picture it belongs to and `show` never needs the code resent.
+            reminder = f"{reminder}\n\nDraft id for this image: {new_draft_id}"
+    elif draft_id:
+        # Re-render of a draft that already exists, picking up any edits. The GET
+        # path works unchanged because get_snippet does not filter drafts out.
+        png, error, captured = await asyncio.to_thread(_client.get_screenshot, draft_id, width, height)
+        if error:
+            # Still a draft, so still the model's problem rather than the user's.
+            return _draft_failure("render", error)
+        reminder = f'{render_prompt(SCREENSHOT, "draft_review")}\n\nDraft id for this image: {draft_id}'
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.

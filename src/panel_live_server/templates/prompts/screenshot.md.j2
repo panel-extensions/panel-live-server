@@ -2,10 +2,11 @@
    form; each is rendered on its own, never together. #}
 {% block draft_review %}REVIEW THIS DRAFT — the user has NOT seen it.
 · Look at the image. Blank, empty, or just a bare axes/frame with nothing plotted? That means the code ran but rendered nothing (e.g. a matplotlib script ending in `plt.show()` instead of the figure) — fix the code so it actually produces output, then call `screenshot(code=...)` again. Do not say it looks good without seeing content.
-· Wrong, ugly, cluttered, or missing something? → fix the code and call `screenshot(code=...)` again.
-· Looks right AND shows real content? → call `show(code=...)` once with the final code to hand it to the user.
+· Wrong, ugly, cluttered, or missing something? → fix it and look again. For a small change — a colour, a title, one line — call `edit(snippet_id, old_str, new_str)` with the draft id below, then `screenshot(draft_id=...)`, rather than resending the whole snippet with `screenshot(code=...)`. You are still reviewing here, so looking again is the point.
+· Looks right AND shows real content? → call `show(draft_id=...)` once, using the draft id given below, to hand it to the user. Do NOT resend the code — the draft has already been rendered and checked, so promoting it is free and guarantees the user gets exactly what you just looked at.
 Do not describe this draft or its problems to the user; just iterate until it is right.{% endblock %}
 {% block shown_image %}IMAGE QUALITY CHECK — before answering:
 · Blurry, pixelated, or clipped? → answer from the code/data instead.
 · Text/labels too small to read confidently? → answer from the code/data instead.
-· Image is clear and complete? → answer from THIS image only. Do NOT recompute from raw data — rendered output and raw data frequently disagree (row order, axis inversion, sorting, binning).{% endblock %}
+· Image is clear and complete? → answer from THIS image only. Do NOT recompute from raw data — rendered output and raw data frequently disagree (row order, axis inversion, sorting, binning).
+· Asked to CHANGE it rather than describe it? → `edit(snippet_id, old_str, new_str)` forks it into a new draft, runs it, and returns the new id; pass that straight to `show(draft_id=...)`. Do not resend the whole snippet for a small change, and do not screenshot in between unless you need to see the change.{% endblock %}

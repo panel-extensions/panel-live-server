@@ -137,6 +137,81 @@ class TestSnippetDatabase:
         assert len(results) >= 1
         assert any("pandas" in r.app.lower() or "pandas" in r.name.lower() for r in results)
 
+    def test_search_after_delete_does_not_match_the_deleted_snippet(self, temp_db):
+        """A deleted snippet must leave nothing behind in the FTS index.
+
+        snippets_fts is an external-content table, which a plain
+        `DELETE FROM snippets_fts` does not maintain, so the postings survived the
+        delete.
+        """
+        snippet = Snippet(app="import pandas", name="Pandas Test", method="inline")
+        temp_db.create_snippet(snippet)
+        assert len(temp_db.search_snippets("pandas")) == 1
+
+        temp_db.delete_snippet(snippet.id)
+
+        assert temp_db.search_snippets("pandas") == []
+
+    def test_search_is_correct_across_rowid_reuse(self, temp_db):
+        """A recycled rowid must not inherit the previous occupant's search terms.
+
+        SQLite reuses rowids after a delete. With orphaned FTS postings still
+        attached to the old rowid, searching for the *deleted* snippet's terms
+        matched whichever snippet inherited it — search_snippets JOINs on rowid,
+        so the wrong row came back, not merely an extra one. Every draft
+        screenshot was a create/delete pair, so this ran constantly.
+        """
+        # Create then delete until a rowid gets handed out twice.
+        seen: set[int] = set()
+        reused = False
+        for i in range(20):
+            snippet = Snippet(app="import zzsentinelpkg", name=f"Doomed {i}", method="inline")
+            temp_db.create_snippet(snippet)
+            with temp_db._get_connection() as conn:
+                rowid = conn.execute("SELECT rowid FROM snippets WHERE id = ?", (snippet.id,)).fetchone()[0]
+            temp_db.delete_snippet(snippet.id)
+            if rowid in seen:
+                reused = True
+                break
+            seen.add(rowid)
+
+        assert reused, "expected SQLite to hand back a rowid it had already used"
+
+        # The successor occupies a recycled rowid and shares none of those terms.
+        successor = Snippet(app="import numpy", name="Innocent", method="inline")
+        temp_db.create_snippet(successor)
+
+        assert temp_db.search_snippets("zzsentinelpkg") == []
+
+        results = temp_db.search_snippets("numpy")
+        assert [r.id for r in results] == [successor.id]
+
+    def test_search_reflects_an_updated_indexed_column(self, temp_db):
+        """Editing an indexed column must move the row in the index, not duplicate it."""
+        snippet = Snippet(app="import pandas", name="Original Title", method="inline")
+        temp_db.create_snippet(snippet)
+
+        with temp_db._get_connection() as conn:
+            conn.execute("UPDATE snippets SET name = ? WHERE id = ?", ("Renamed Title", snippet.id))
+            conn.commit()
+
+        assert temp_db.search_snippets("Original") == []
+        assert [r.id for r in temp_db.search_snippets("Renamed")] == [snippet.id]
+
+    def test_status_update_leaves_the_index_alone(self, temp_db):
+        """/view stamps status on every page load; that must not reindex the row.
+
+        The update trigger is scoped with `UPDATE OF` to the indexed columns so the
+        render hot path does not pay for a delete-and-reinsert each time.
+        """
+        snippet = Snippet(app="import pandas", name="Pandas Test", method="inline")
+        temp_db.create_snippet(snippet)
+
+        for _ in range(3):
+            temp_db.update_snippet(snippet.id, status="success", execution_time=0.1)
+
+        assert [r.id for r in temp_db.search_snippets("pandas")] == [snippet.id]
+
     def test_create_visualization_with_pyodide_method(self, temp_db):
         """Pyodide execution method is accepted and persisted."""
         snippet = temp_db.create_visualization(
