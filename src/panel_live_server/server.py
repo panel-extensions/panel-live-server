@@ -1018,10 +1018,7 @@ def _capture_report(capture: Capture) -> str:
 
     if capture.controls:
         example = capture.controls[0]
-        notes.append(
-            f"CONTROLS: {', '.join(capture.controls)}. "
-            f"""Call screenshot(do=[{{"click": "{example}"}}]) to act on one."""
-        )
+        notes.append(f"CONTROLS: {', '.join(capture.controls)}. " f"""Call screenshot(do=[{{"click": "{example}"}}]) to act on one.""")
 
     if capture.total_tiles > capture.captured_tiles:
         more = capture.total_tiles - capture.captured_tiles
