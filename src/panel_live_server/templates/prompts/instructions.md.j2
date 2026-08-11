@@ -6,7 +6,21 @@
 `screenshot(code=...)` renders one and returns the picture to YOU only — nothing
 reaches the chat and nothing is added to the user's feed.
 So when you want to check your own output before delivering it, screenshot the
-draft, fix what is wrong, screenshot again, and call `show` once at the end.
+draft, fix what is wrong, screenshot again, and finish with `show`.
+Each `screenshot(code=...)` reports a draft id. When the draft finally looks
+right, call `show(draft_id=...)` with that id rather than `show(code=...)` with
+the code pasted again: the draft has already been rendered and checked, so
+promoting it runs nothing, sends nothing twice, and gives the user exactly the
+version you approved.
+`edit(snippet_id, old_str, new_str)` changes part of something already stored,
+without you resending it. It works on a draft (edited in place) and on something
+the user has already been shown (forked into a new draft, so their version does
+not change under them). The edited code is run before it returns, so the id you
+get back can go straight to `show(draft_id=...)`; screenshot it first only when
+you need to SEE the change rather than just make it. Prefer this over resending
+the whole snippet when you are adjusting something small — a colour, a title, one
+line — since a full rewrite costs you the entire snippet each round. Resending is
+still fine for short snippets or sweeping changes.
 Never call `show` on work you are still iterating on, and never call it just to
 get a snippet_id to screenshot.
 `evaluate(code)` runs code and returns its TEXT output to you — whatever it

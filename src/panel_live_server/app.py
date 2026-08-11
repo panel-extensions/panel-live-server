@@ -13,6 +13,7 @@ from panel_live_server.database import get_db
 from panel_live_server.endpoints import EvaluateEndpoint
 from panel_live_server.endpoints import HealthEndpoint
 from panel_live_server.endpoints import ScreenshotEndpoint
+from panel_live_server.endpoints import SnippetEditEndpoint
 from panel_live_server.endpoints import SnippetEndpoint
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,7 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
     extra_patterns = [
         (r"/api/snippet", SnippetEndpoint),
         (r"/api/screenshot", ScreenshotEndpoint),
+        (r"/api/snippet/edit", SnippetEditEndpoint),
         (r"/api/evaluate", EvaluateEndpoint),
         (r"/api/health", HealthEndpoint),
     ]

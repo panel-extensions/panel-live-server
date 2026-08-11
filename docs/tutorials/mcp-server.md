@@ -29,7 +29,7 @@ Ask your AI assistant:
 
 > List your available MCP tools.
 
-You should see three tools in the response:
+You should see four tools in the response:
 
 - `show`: validates the code, renders the visualization, and returns a live URL
 - `screenshot`: takes a picture of a visualization for the AI to look at — either a draft it
@@ -38,12 +38,14 @@ You should see three tools in the response:
   says when there is more — what else is on the page and whether content continues past the fold
   — so the AI can ask for the rest of a scrolling page, or click/select/drag its way to a
   particular state, only when the question needs it
+- `edit`: changes part of a snippet without resending all of it. Asking for a different colour
+  costs the AI one line instead of the whole chart
 - `evaluate`: runs code and hands back its text output — what it printed and the value of its
   last line. No browser, no picture. This is how the AI checks a fact ("does this option
   exist?", "what columns does that have?") without rendering anything
 
-The three differ by who receives what: `show` gives *you* a live page, `screenshot` gives the
-*AI* a picture, and `evaluate` gives the *AI* text.
+They differ by who receives what: `show` gives *you* a live page, while `screenshot`, `edit`, and
+`evaluate` all report back to the *AI*.
 
 ---
 
@@ -122,7 +124,14 @@ If the result isn't what you expected, continue the conversation:
 - "Show only penguins with body mass greater than 4000g"
 - "Display the scatter plot and a histogram side by side"
 
-Each message creates a new visualization. Previous ones remain accessible at their URLs.
+Each message produces a new visualization, and the previous ones stay accessible at their URLs —
+so "actually, go back to the earlier one" costs nothing.
+
+For a small change, the AI does not resend the whole chart. It calls `edit` with just the part
+that differs, which forks a new version and leaves the one you are looking at untouched until the
+new one is ready. You will see a fresh entry appear in your feed rather than the existing chart
+changing under you. On a long snippet this is the difference between a one-line message and a
+two-hundred-line one.
 
 ---
 
@@ -153,8 +162,14 @@ A typical AI-assisted session looks like this:
 3. The URL is shown to you, click it to open the live visualization
 4. If you ask a question about how the result looks, the AI calls `screenshot` to see it
    before answering
-5. To check a fact rather than an appearance, the AI calls `evaluate` instead — it returns
+5. If you ask for a small change, the AI calls `edit` with only the part that differs, then
+   `show` on the version that comes back
+6. To check a fact rather than an appearance, the AI calls `evaluate` instead — it returns
    text, so no browser is launched and nothing is added to your feed
+
+When the AI is building something from scratch it often works in private first: `screenshot`
+renders a draft and returns the picture to the AI alone, so it can fix its own mistakes before
+anything reaches your feed. Only the approved version gets shown to you.
 
 See [Architecture](../explanation/architecture.md) for the full picture.
 
@@ -220,7 +235,7 @@ for the per-installer command.
 - Configure the Panel Live Server MCP server for your AI assistant
 - Ask the AI to create visualizations using natural language
 - Ask a follow-up question about a visualization's appearance and have the AI check with `screenshot`
-- Iterate on visualizations through conversation
+- Iterate on visualizations through conversation, with small changes going through `edit`
 - Check available packages with the `pls list packages` CLI command
 
 ## Next Steps

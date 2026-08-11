@@ -125,8 +125,15 @@ _CONTENT_SELECTOR = "canvas, .bk-Row, .bk-Column, .bk, .markdown, table, img, sv
 #: Reset) renders each tool as a plain ``<div class="bk-OnOffButton">`` with a
 #: ``title``, not as a ``<button>`` — without ``[title]`` here the toolbar is
 #: invisible to the report even though :func:`_locate` can still click it.
+#: ``.bk-tab`` earns the same treatment for the same reason: a native ``pn.Tabs``
+#: header is a bare ``<div class="bk-tab">`` with no ``role`` and no ``title``,
+#: so nothing else in this list would catch it. Naming this one convention does
+#: not revive the old gate — ``do`` still reaches anything by text regardless of
+#: whether it is listed here, so a widget this selector does not know about
+#: costs a less complete report, never a broken click.
 _CONTROL_SELECTOR = (
-    "button, a[href], select, summary, input:not([type='hidden']), [title], [role=tab], [role=button], [role=menuitem], [role=option], [role=switch], [role=slider]"
+    "button, a[href], select, summary, input:not([type='hidden']), [title], .bk-tab, "
+    "[role=tab], [role=button], [role=menuitem], [role=option], [role=switch], [role=slider]"
 )
 
 #: A control's name is whatever a person would call it. A labelled form field

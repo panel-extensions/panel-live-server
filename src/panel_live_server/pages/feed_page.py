@@ -9,6 +9,7 @@ import panel_material_ui as pmui
 
 from panel_live_server.database import get_db
 from panel_live_server.utils import get_relative_view_url
+from panel_live_server.validation import ruff_format
 
 ABOUT = """
 ## Visualization Feed
@@ -79,6 +80,13 @@ def feed_page():
     allow="fullscreen; clipboard-write; autoplay"
 ></iframe>
 </div>"""
+        # Formatted here rather than at storage: the stored text stays identical to
+        # what its author sent, so an agent editing it by string match still
+        # matches. Once per entry — get_view is cached by id, so the 3-second
+        # refresh does not pay for this again — and shared with the copy button so
+        # the panel and the clipboard cannot disagree.
+        display_code = ruff_format(req.app)
+
         # Create action buttons with Material UI icon buttons
         open_button = pmui.IconButton(
             icon="open_in_new",
@@ -98,7 +106,7 @@ def feed_page():
         )
 
         # JavaScript callback to copy code to clipboard
-        code_escaped = req.app.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+        code_escaped = display_code.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
         copy_button.js_on_click(
             args={"code": code_escaped},
             code="""
@@ -123,7 +131,7 @@ def feed_page():
                     pn.Tabs(
                         pn.pane.Markdown(iframe, name="View"),
                         pn.widgets.CodeEditor(
-                            value=req.app,
+                            value=display_code,
                             name="Code",
                             language="python",
                             theme="github_dark",

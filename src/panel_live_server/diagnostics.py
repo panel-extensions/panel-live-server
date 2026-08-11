@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 #: side only would silently stop diagnostics coming back, with no error anywhere.
 HEADER = "X-PLS-Diagnostics"
 
+#: HTTP header carrying the id of the draft row a ``POST /api/screenshot`` kept.
+#:
+#: Lives here rather than in ``endpoints`` for the same reason as ``HEADER``, and
+#: because this module is already the one piece of the response contract that
+#: both processes import: ``endpoints`` writes it and ``client`` reads it, so a
+#: constant placed here needs no new import on either side.
+DRAFT_ID_HEADER = "X-PLS-Draft-Id"
+
 #: Snippets retained before the oldest is evicted. An internal safety valve
 #: rather than a setting: entries are consumed as soon as the capture finishes,
 #: so this only bounds growth when a render is never screenshotted.

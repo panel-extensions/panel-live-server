@@ -14,6 +14,8 @@ MCP Client (Claude, Copilot, etc.)
   ▼
 pls mcp, MCP Server (FastMCP)
   │  HTTP  POST /api/snippet
+  │  HTTP  GET  /api/snippet
+  │  HTTP  POST /api/snippet/edit
   │  HTTP  POST /api/screenshot
   │  HTTP  POST /api/evaluate
   │  HTTP  GET  /api/health
@@ -24,8 +26,8 @@ pls serve, Panel Server (subprocess, port 5077)
 Browser, /view  /feed  /add  /admin
 ```
 
-**MCP Server** (`pls mcp`): Hosts the `show`, `screenshot`, and `evaluate` MCP tools. Starts
-the Panel server as a subprocess and manages its lifecycle. It never executes snippet code
+**MCP Server** (`pls mcp`): Hosts the `show`, `screenshot`, `edit`, and `evaluate` MCP tools.
+Starts the Panel server as a subprocess and manages its lifecycle. It never executes snippet code
 itself — every tool forwards the code to the Panel server, which owns execution.
 
 **Panel Server** (`pls serve`): Executes Python code and serves visualizations as web pages.
@@ -37,13 +39,14 @@ Exposes a REST API and four browser-accessible pages.
 
 ## MCP Tools
 
-The MCP server exposes three tools to the AI assistant, meant to be used together in a
+The MCP server exposes four tools to the AI assistant, meant to be used together in a
 typical session. They differ by *who receives what*:
 
 | Tool | Returns | To whom |
 |---|---|---|
 | `show` | a live, interactive page | the user |
 | `screenshot` | a PNG of the rendered page | the assistant |
+| `edit` | the id of the changed code | the assistant |
 | `evaluate` | text — stdout and the last expression | the assistant |
 
 The **assistant** cannot install packages. It writes code against whatever is already in the
@@ -99,11 +102,25 @@ show(
 
 The tool accepts:
 
-- **code** (required): Python code to execute
+- **code**: Python code to execute — omit when promoting a draft
 - **name**: Human-readable title
 - **description**: One-sentence explanation
 - **method**: Execution method, `"inline"` (default) or `"server"`
 - **zoom**: Initial zoom level, `25`, `50`, `75`, or `100`
+- **draft_id**: Hand over a draft the assistant already rendered, instead of resending its code
+
+**Promoting a draft.** When the assistant has been iterating with `screenshot`, the approved
+version already exists on the server, already ran, and already rendered in a real browser.
+`show(draft_id=...)` flips it out of draft state and returns its URL — no re-validation, no second
+execution, and no need to resend the code. The alternative, `show(code=...)` with the snippet
+pasted again, costs the whole snippet in output tokens and re-runs work that is already done. It
+also removes a failure mode: promotion cannot introduce a difference between what the assistant
+looked at and what the user receives.
+
+The returned payload deliberately does **not** echo the code back. That echo was the largest
+field in a message the assistant re-reads on every subsequent turn, spent to populate a panel the
+user opens rarely. The App fetches the code from `GET /api/snippet?id=` instead, when the panel is
+actually opened.
 
 ### `screenshot`: see the result, don't guess
 
@@ -111,11 +128,12 @@ The tool accepts:
 `screenshot` tool closes that gap: it loads a rendered `/view` page in a headless browser and
 returns a PNG of it directly to the AI.
 
-It takes either a `snippet_id` or raw `code`:
+It takes either a `snippet_id`, a `draft_id`, or raw `code`:
 
 ```python
 screenshot(snippet_id="abc123", width=1200, height=800)  # something already shown
-screenshot(code="...", method="server")                                   # a draft nobody has seen
+screenshot(code="...", method="server")                  # a draft nobody has seen
+screenshot(draft_id="def456")                            # that draft again, after an edit
 ```
 
 By default the capture is one screen, exactly as the page loaded — nothing scrolled, nothing
@@ -129,11 +147,20 @@ clicked. Two more parameters opt into more:
   reports what else is on the page and whether it continues past the fold, so the AI knows there
   is more to ask for without having to guess.
 
-**Reviewing a draft.** The `code` form renders the snippet, captures it, and deletes it again,
-so the draft never reaches the chat or the feed. That gives the AI a private loop — render,
-look, fix, look again — and `show` gets called once, at the end, on work that is actually
-finished. Without it the AI has to call `show` to obtain a `snippet_id`, which means every
-half-baked intermediate version is published to the user before the AI has even seen it.
+**Reviewing a draft.** The `code` form renders the snippet and captures it while keeping it out
+of the chat, out of the feed, and out of search. That gives the AI a private loop — render, look,
+fix, look again — and `show` gets called once, at the end, on work that is actually finished.
+Without it the AI has to call `show` to obtain a `snippet_id`, which means every half-baked
+intermediate version is published to the user before the AI has even seen it.
+
+The draft is **retained** rather than discarded, which is what lets `show(draft_id=...)` hand it
+over later without storing and executing the same code a second time. Drafts are swept by age
+(`draft_retention_hours`, default 24) rather than on the way out.
+
+The draft is also deliberately *not* executed before the capture. Loading `/view` runs it and
+stamps the row with a status and, on failure, a traceback — so the row is re-read afterwards and a
+broken draft comes back as its traceback rather than as a picture of one. One execution per
+draft, not two.
 
 **Answering questions about appearance.** The `snippet_id` form handles follow-ups on something
 the user already has: "where does it peak?", "which bar is tallest?", "what color is that
@@ -158,6 +185,40 @@ a plot that fails for one of those reasons screenshots as an empty frame — vis
 a plot with no data, or one drawn off-screen. Without the console the picture cannot distinguish
 them, which makes it the least informative evidence available at exactly the moment it is most
 tempting to keep taking pictures.
+
+### `edit`: change part of a snippet without resending it
+
+A draft loop otherwise costs a full rewrite per turn. To change one colour in a 200-line snippet,
+the assistant resends all 200 lines — every round. `edit` makes the output proportional to the
+change rather than to the snippet:
+
+```python
+edit(snippet_id="abc123", old_str="color='blue'", new_str="color='red'")
+```
+
+`old_str` must occur exactly once. Zero matches and multiple matches are both refused rather than
+guessed at, and an edit that would leave the code unparsable is rejected before anything is
+written — finding out by launching a browser is the expensive way to learn about a missing
+bracket.
+
+**Drafts are edited in place. Shown snippets are forked.** Nothing changes underneath a user who
+is already looking at it, so editing something already shown creates a *new* draft carrying the
+change and returns its id; the live version does not move. Showing the fork adds a new entry to
+the feed and leaves the previous one intact, which also means "go back to the old one" costs
+nothing.
+
+Refusing to edit shown snippets was the earlier design. It protected the same invariant, but it
+cost a wasted call on the commonest shape there is — show, then "tweak that" — and pushed the
+assistant back to resending the whole snippet, which is exactly what this tool exists to avoid.
+
+The edited code is executed before the call returns, so the returned id is ready for
+`show(draft_id=...)` directly. Two consequences: a change that breaks at runtime is refused with
+its traceback rather than becoming a showable id, and a small tweak does not need a screenshot in
+between purely to make the result promotable. Screenshotting remains worthwhile when the
+assistant needs to *see* the change rather than just make it.
+
+The response carries the id and a character count, never the code. Echoing the snippet back would
+spend exactly what the edit just saved.
 
 ### `evaluate`: read a value without rendering anything
 
@@ -232,6 +293,7 @@ A **snippet** is a stored code sample with metadata. Each snippet has:
 - Status: `pending`, `success`, or `error`
 - Detected package imports and Panel extensions
 - Execution method and timestamps
+- Draft flag: held back from the feed and from search while the assistant is still iterating
 
 ### Inline Method (Default)
 
@@ -278,6 +340,19 @@ The database includes:
 - All snippet metadata and code
 - Execution results and error messages
 - Full-text search index (FTS5) for finding snippets
+
+**Code is stored verbatim.** Whatever the assistant sent is what lands in the database, character
+for character. Formatting is applied when code is *read* for a human — by the feed's code tab, and
+by `GET /api/snippet?id=` when the App's code panel is opened — rather than on the way in.
+
+The reason is `edit`. It matches `old_str` against the stored text, and the assistant matches
+against what it wrote. Reformatting between the two makes the edit miss for reasons nobody can
+see: `ruff format` normalises quote style, so a snippet written with `'x'` is stored as `"x"` and
+no single-quoted `old_str` can ever match it. Formatting at read time keeps the stored bytes
+honest and still shows people tidy code.
+
+One consequence worth knowing when debugging: the code panel shows *formatted* code, so it cannot
+be used to inspect exactly what is stored. Query the database directly for that.
 
 URLs follow the pattern: `http://localhost:5077/view?id={snippet_id}`
 

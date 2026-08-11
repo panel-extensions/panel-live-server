@@ -19,9 +19,14 @@ logger = logging.getLogger(__name__)
 # Marks a screenshot failure caused by the missing headless browser rather than by the code.
 BROWSER_UNAVAILABLE_PREFIX = "PlaywrightUnavailable: "
 
-#: What the screenshot calls hand back: the capture, an error message, and
-#: whatever the render printed or the browser logged.
+#: What ``get_screenshot`` hands back: the capture, an error message, and
+#: whatever the render printed or the browser logged. No draft id — a GET
+#: renders a snippet that already exists.
 ScreenshotResult = tuple[screenshot.Capture | None, str | None, dict[str, str]]
+
+#: What ``screenshot_code`` hands back: the same three, plus the id of the
+#: retained draft so ``show(draft_id=...)`` can promote it without re-running it.
+DraftScreenshotResult = tuple[screenshot.Capture | None, str | None, dict[str, str], str]
 
 
 class DisplayClient:
@@ -60,15 +65,16 @@ class DisplayClient:
         except requests.RequestException:
             return False
 
-    def create_snippet(self, code: str, name: str = "", description: str = "", method: str = "inline", validated: bool = False) -> dict:
+    def create_snippet(self, code: str = "", name: str = "", description: str = "", method: str = "inline", validated: bool = False, draft_id: str = "") -> dict:
         """Create a visualization snippet on the Display Server.
 
-        Sends Python code to the server for execution and rendering.
+        Sends Python code to the server for execution and rendering, or promotes
+        a draft that has already been rendered.
 
         Parameters
         ----------
         code : str
-            Python code to execute
+            Python code to execute. Ignored when *draft_id* is given.
         name : str, optional
             Name for the visualization
         description : str, optional
@@ -76,9 +82,17 @@ class DisplayClient:
         method : str, optional
             Execution method ("inline" or "server")
         validated : bool, optional
-            When True, signals that the code was already validated and executed
-            by the MCP ``show`` tool, so the server can skip its redundant
-            storage-time validation and execution.
+            When True, signals that the caller already ran the static validation
+            layers, so the server can skip repeating them. ``show`` currently
+            passes False: its static pass is cached and cheap, but the server's
+            storage-time *execution* is what populates ``error_message``, and
+            that is the gate that catches a runtime failure before the user's
+            iframe loads.
+        draft_id : str, optional
+            Promote this draft instead of storing new code. The draft has already
+            rendered under a real browser, so promotion neither validates nor
+            executes — it just stops being a draft. This is the path that makes
+            the final ``show`` of an iterated visualization free.
 
         Returns
         -------
@@ -101,9 +115,16 @@ class DisplayClient:
                     "description": description,
                     "method": method,
                     "validated": validated,
+                    "draft_id": draft_id,
                 },
                 timeout=self.timeout,
             )
+
+            # A rejected promotion — unknown id, already shown, or last rendered
+            # with an error — comes back as 400 with a message worth passing on,
+            # so read the body rather than raising a bare HTTP error.
+            if response.status_code == 400:
+                return response.json()
 
             response.raise_for_status()
             return response.json()
@@ -111,6 +132,41 @@ class DisplayClient:
         except requests.RequestException as e:
             logger.exception(f"Error creating visualization: {e}")
             raise RuntimeError(f"Failed to create visualization: {e}") from e
+
+    def edit_snippet(self, snippet_id: str, old_str: str, new_str: str) -> dict:
+        """Replace one occurrence of *old_str* with *new_str* in a stored snippet.
+
+        Lets an iteration send only what changed instead of the whole snippet
+        again, which is where the output-token cost of a draft loop lives.
+
+        A draft is edited in place. A snippet the user has already been shown is
+        forked into a new draft carrying the change, so the live version does not
+        move under them; ``forked`` says which happened and ``id`` is the row to
+        screenshot next.
+
+        Returns
+        -------
+        dict
+            ``{"id": str, "chars": int, "forked": bool}`` on success, or
+            ``{"error": ..., "message": ...}`` describing why the edit was refused.
+        """
+        try:
+            response = self.session.post(
+                f"{self.base_url}/api/snippet/edit",
+                json={"snippet_id": snippet_id, "old_str": old_str, "new_str": new_str},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as e:
+            logger.warning("Snippet edit request error: %s", e)
+            return {"error": "RequestException", "message": f"Edit request failed: {e}"}
+
+        try:
+            return response.json()
+        except ValueError:
+            return {
+                "error": f"HTTP {response.status_code}",
+                "message": response.text or "Edit returned a non-JSON response.",
+            }
 
     def evaluate(self, code: str) -> dict:
         """Execute *code* on the server and return its text output.
@@ -163,7 +219,9 @@ class DisplayClient:
         if height:
             params["height"] = height
 
-        return self._screenshot_request("GET", snippet_id, params=params)
+        # A GET renders a snippet that already exists, so there is no draft id.
+        png, error, diags, _ = self._screenshot_request("GET", snippet_id, params=params)
+        return png, error, diags
 
     def screenshot_code(
         self,
@@ -175,18 +233,21 @@ class DisplayClient:
         height: int | None = None,
         full_page: bool = False,
         do: list | None = None,
-    ) -> ScreenshotResult:
-        """Render *code* and return a screenshot of it without keeping the snippet.
+    ) -> DraftScreenshotResult:
+        """Render *code* and return a screenshot of it without showing it to the user.
 
         Backs the draft path of the MCP ``screenshot`` tool (issue #43): the
-        server stores the code only long enough to load it in a browser, so an
-        agent can review a draft without it appearing in the user's feed.
+        server stores the code as a draft, kept out of the feed and out of search,
+        so an agent can review it without anything reaching the user.
+
+        The draft is retained rather than discarded, and its id comes back, so
+        ``show(draft_id=...)`` can promote it later without re-running it.
 
         Returns
         -------
-        ScreenshotResult
-            ``(capture, None, diagnostics)`` on success, or
-            ``(None, error_message, {})`` on failure.
+        DraftScreenshotResult
+            ``(capture, None, diagnostics, draft_id)`` on success, or
+            ``(None, error_message, {}, "")`` on failure.
         """
         payload: dict[str, str | int | bool | list | None] = {
             "code": code,
@@ -203,20 +264,20 @@ class DisplayClient:
 
         return self._screenshot_request("POST", "draft", json=payload)
 
-    def _screenshot_request(self, verb: str, label: str, **kwargs) -> ScreenshotResult:
+    def _screenshot_request(self, verb: str, label: str, **kwargs) -> DraftScreenshotResult:
         """Call ``/api/screenshot`` and unpack the image-or-error response.
 
-        One image comes back as ``image/png``; several — tiles of a tall page,
-        or pages of a dashboard — come back as JSON carrying a base64 PNG each.
-        Either way the report of what was *not* captured rides along in the
-        ``X-PLS-Capture`` header.
+        One image comes back as ``image/png``; several — tiles of a tall page —
+        come back as JSON carrying a base64 PNG each. Either way the report of
+        what was *not* captured rides along in the ``X-PLS-Capture`` header.
 
         Returns
         -------
-        ScreenshotResult
-            ``(capture, error, diagnostics)``. The last element holds whatever
-            the render printed and whatever the browser logged; it is ``{}`` when
-            the render was silent or the request failed.
+        DraftScreenshotResult
+            ``(capture, error, diagnostics, draft_id)``. The third element holds
+            whatever the render printed and whatever the browser logged; it is
+            ``{}`` when the render was silent or the request failed. The fourth is
+            the id of the retained draft, empty for anything but a POST.
         """
         try:
             response = self.session.request(
@@ -227,22 +288,23 @@ class DisplayClient:
             )
         except requests.RequestException as e:
             logger.warning("Screenshot request error for %s: %s", label, e)
-            return None, f"Screenshot request failed: {e}", {}
+            return None, f"Screenshot request failed: {e}", {}, ""
 
         if response.status_code == 200:
             content_type = response.headers.get("Content-Type", "")
             meta = screenshot.decode_meta(response.headers.get(screenshot.META_HEADER, ""))
             notes = diagnostics.decode(response.headers.get(diagnostics.HEADER, ""))
+            draft_id = response.headers.get(diagnostics.DRAFT_ID_HEADER, "")
             if "image/png" in content_type:
                 capture = screenshot.Capture(images=[("", response.content)])
-                return screenshot.apply_meta(capture, meta), None, notes
+                return screenshot.apply_meta(capture, meta), None, notes, draft_id
             if "application/json" in content_type:
                 try:
                     images = [(i.get("label", ""), base64.b64decode(i["png"])) for i in response.json()["images"]]
                 except Exception as e:
                     logger.warning("Malformed multi-image screenshot response for %s: %s", label, e)
-                    return None, f"Malformed multi-image screenshot response: {e}", {}
-                return screenshot.apply_meta(screenshot.Capture(images=images), meta), None, notes
+                    return None, f"Malformed multi-image screenshot response: {e}", {}, ""
+                return screenshot.apply_meta(screenshot.Capture(images=images), meta), None, notes, draft_id
 
         try:
             body = response.json()
@@ -254,7 +316,7 @@ class DisplayClient:
         except ValueError:
             message = response.text or f"HTTP {response.status_code}"
         logger.warning("Screenshot failed (HTTP %s) for %s: %s", response.status_code, label, message)
-        return None, message, {}
+        return None, message, {}, ""
 
     def close(self) -> None:
         """Close the HTTP session and cleanup resources."""

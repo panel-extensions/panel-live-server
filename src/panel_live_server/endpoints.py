@@ -18,12 +18,15 @@ from tornado.web import RequestHandler
 
 from panel_live_server import diagnostics
 from panel_live_server import screenshot
+from panel_live_server import usage
 from panel_live_server.config import get_config
 from panel_live_server.database import get_db
 from panel_live_server.utils import execute_in_module
 from panel_live_server.utils import extract_last_expression
+from panel_live_server.utils import validate_code
 from panel_live_server.validation import SecurityError
 from panel_live_server.validation import ast_check
+from panel_live_server.validation import ruff_format
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,56 @@ def _get_external_base_url(request_host: str) -> str | None:
 class SnippetEndpoint(RequestHandler):
     """Tornado RequestHandler for /api/snippet endpoint."""
 
+    def set_default_headers(self):
+        """Allow the MCP App to read a snippet's code from its own origin.
+
+        ``show.html`` runs inside the host application, not on this server, so a
+        cross-origin read needs this header. The data is already reachable by
+        anything that can reach this port, which is the same machine, so the
+        header grants nothing that was not already available.
+        """
+        self.set_header("Access-Control-Allow-Origin", "*")
+
+    def get(self):
+        """Return a stored snippet's code and metadata for ``?id=``.
+
+        Exists so the ``show`` payload no longer has to carry the code itself.
+        That echo was paid on every call, in the model's context, to populate a
+        panel the user opens rarely — so the code is fetched here instead, when
+        it is actually looked at.
+
+        The code is formatted on the way out rather than on the way in. Storage
+        stays byte-identical to what the author sent, so ``old_str`` edits keep
+        matching, while a human opening the panel still sees tidy code. This runs
+        only when the panel is actually opened, so the cost is paid by the click.
+        """
+        snippet_id = self.get_argument("id", "")
+        if not snippet_id:
+            self.set_status(400)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "ValueError", "message": "Missing 'id' parameter"})
+            return
+
+        snippet = get_db().get_snippet(snippet_id)
+        if snippet is None:
+            self.set_status(404)
+            self.set_header("Content-Type", "application/json")
+            self.write({"error": "NotFound", "message": f"Snippet {snippet_id} not found"})
+            return
+
+        self.set_status(200)
+        self.set_header("Content-Type", "application/json")
+        self.write(
+            {
+                "id": snippet.id,
+                "code": ruff_format(snippet.app),
+                "name": snippet.name,
+                "description": snippet.description,
+                "method": snippet.method,
+                "status": snippet.status,
+            }
+        )
+
     def post(self):
         """Handle POST requests to store snippets and create visualizations."""
         # Get database instance
@@ -58,15 +111,35 @@ class SnippetEndpoint(RequestHandler):
             description = request_body.get("description", "")
             method = request_body.get("method", "inline")
             validated = request_body.get("validated", False)
+            draft_id = request_body.get("draft_id", "")
 
-            # Skip validation if already done by the MCP show tool.
-            snippet = db.create_visualization(
-                app=code,
-                name=name,
-                description=description,
-                method=method,
-                skip_validation=validated,
-            )
+            if draft_id:
+                # Counted with zero characters on purpose: a promotion hands a
+                # finished visualization to the user without resending its code,
+                # and that saving is only visible if the call is counted at all.
+                usage.record("promote", 0)
+                # Promotion. The draft has already rendered successfully under
+                # Playwright, so there is nothing left to check and nothing to
+                # run: hand the existing row to the user rather than storing and
+                # executing the same code a second time.
+                snippet = db.promote_draft(draft_id, name=name or None, description=description or None)
+            else:
+                usage.record("show", len(code))
+                # `validated` says the caller already ran the static layers itself.
+                # Kept as one flag on the wire; the three-way split is server-side.
+                #
+                # format=False regardless: an agent may edit this snippet later by
+                # string match, and reformatting on the way in is what makes that
+                # miss. Formatting is applied when the code is read for display.
+                snippet = db.create_visualization(
+                    app=code,
+                    name=name,
+                    description=description,
+                    method=method,
+                    run_static=not validated,
+                    format=False,
+                    execute=not validated,
+                )
 
             if base_url := _get_external_base_url(self.request.host):
                 url = f"{base_url}/view?id={snippet.id}"
@@ -130,9 +203,16 @@ class ScreenshotEndpoint(RequestHandler):
 
     ``POST /api/screenshot`` with a JSON body of ``{"code": ..., "name": ...,
     "description": ..., "method": ...}`` captures code that has never been shown
-    (issue #43). The snippet is stored only for as long as the browser needs a
-    page to load and is deleted afterwards, so an agent can review a draft
-    without it reaching the user's feed.
+    (issue #43). The row is stored as a *draft*: kept out of the feed and out of
+    search, so an agent can iterate without anything reaching the user. The id is
+    returned in the ``X-PLS-Draft-Id`` header, and ``show(draft_id=...)`` later
+    promotes the draft the agent settles on — which is what lets the final show
+    cost no execution at all. Drafts are swept by age, not on the way out.
+
+    The draft is deliberately *not* executed before the capture. Loading ``/view``
+    runs it and stamps the row with a status and, on failure, a traceback — so the
+    row is re-read afterwards and a failed draft comes back as its traceback
+    rather than as a picture of one. One execution per draft, not two.
 
     Query parameters (GET) / body fields (POST)
     -------------------------------------------
@@ -181,16 +261,17 @@ class ScreenshotEndpoint(RequestHandler):
             self._error(400, 'do must be JSON-encoded, e.g. do=[{"click": "Reports"}]', error="ActionError")
             return
 
-        await self._capture(
+        if captured := await self._capture(
             snippet_id,
             width=self.get_argument("width", ""),
             height=self.get_argument("height", ""),
             full_page=self.get_argument("full_page", "false"),
             do=do,
-        )
+        ):
+            self._write_capture(*captured)
 
     async def post(self):
-        """Store the posted code just long enough to capture it, then discard it."""
+        """Store the posted code as a draft, capture it, and hand back the picture."""
         try:
             body = json.loads(self.request.body.decode("utf-8"))
         except ValueError:
@@ -202,13 +283,34 @@ class ScreenshotEndpoint(RequestHandler):
             self._error(400, "Missing 'code' in request body")
             return
 
+        usage.record("screenshot", len(code))
+
         db = get_db()
+
+        # Sweep here rather than at startup: drafts accumulate fastest during a
+        # long iterating session, which is exactly when a startup-only sweep has
+        # already run and will not run again. An indexed delete on the way in is
+        # cheap and keeps the bound tied to activity.
         try:
+            db.delete_stale_drafts(get_config().draft_retention_hours)
+        except Exception:
+            logger.warning("Could not sweep stale drafts", exc_info=True)
+
+        try:
+            # execute=False: the Playwright render below is itself the error
+            # detector — /view runs the code and writes status + traceback to the
+            # row — so executing here as well would run every draft twice for one
+            # picture, which is the cost this path exists to avoid.
+            # format=False: store the draft verbatim so the text on disk matches
+            # the text the model holds, and formatting is deferred to promotion.
             snippet = db.create_visualization(
                 app=code,
                 name=body.get("name", ""),
                 description=body.get("description", ""),
                 method=body.get("method", "inline"),
+                format=False,
+                execute=False,
+                draft=True,
             )
         except SecurityError as e:
             self._error(400, str(e), error="SecurityError")
@@ -220,29 +322,51 @@ class ScreenshotEndpoint(RequestHandler):
             self._error(400, str(e), error=type(e).__name__)
             return
 
-        try:
-            if snippet.error_message:
-                self._error(400, snippet.error_message, error="RuntimeError")
-                return
-            await self._capture(
-                snippet.id,
-                width=str(body.get("width", "")),
-                height=str(body.get("height", "")),
-                full_page=str(body.get("full_page", False)),
-                do=body.get("do"),
-            )
-        finally:
+        captured = await self._capture(
+            snippet.id,
+            width=str(body.get("width", "")),
+            height=str(body.get("height", "")),
+            full_page=str(body.get("full_page", False)),
+            do=body.get("do"),
+        )
+        if captured is None:
+            # Nothing usable came back, so the row is of no further interest.
             db.delete_snippet(snippet.id)
+            return
 
-    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str, do: list | None = None) -> None:
-        """Screenshot ``/view?id=<snippet_id>`` and write the PNG to the response."""
+        # Read the verdict the render just wrote instead of having executed the
+        # code a second time up front to find out. A snippet that raised renders
+        # as an error pane, so the PNG would otherwise be a picture of a traceback
+        # rather than the traceback itself.
+        rendered = db.get_snippet(snippet.id)
+        if rendered is not None and rendered.status == "error":
+            db.delete_snippet(snippet.id)
+            self._error(400, rendered.error_message or "The draft failed to render.", error="RuntimeError")
+            return
+
+        # Kept, not deleted: show(draft_id=...) promotes this row without
+        # re-running it, which is what removes the final redundant execution.
+        self.set_header(diagnostics.DRAFT_ID_HEADER, snippet.id)
+        self._write_capture(*captured)
+
+    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str, do: list | None = None) -> tuple[screenshot.Capture, str] | None:
+        """Screenshot ``/view?id=<snippet_id>``, returning the capture and its diagnostics.
+
+        Returns ``(capture, diagnostics_header)`` on success, or ``None`` when
+        the capture failed — in which case an error response has already been
+        written and the caller should return immediately.
+
+        The response is deliberately not written here: the POST path has to
+        inspect the row this render just stamped before it can decide whether
+        the caller gets a picture or a traceback.
+        """
         config = get_config()
         try:
             viewport_width = int(width or config.screenshot_width)
             viewport_height = int(height or config.screenshot_height)
         except ValueError:
             self._error(400, "width and height must be integers")
-            return
+            return None
 
         view_url = f"http://{_local_host(config.host)}:{config.port}/view?id={snippet_id}"
 
@@ -264,28 +388,36 @@ class ScreenshotEndpoint(RequestHandler):
             self.set_status(503)
             self.set_header("Content-Type", "application/json")
             self.write({"error": "PlaywrightUnavailable", "message": str(e)})
-            return
+            return None
         except screenshot.ActionError as e:
             # A step in `do` was malformed or named something the page does not
             # have — the caller can fix that, so say what is actually there.
             # Deliberately not a bare ``ValueError``: that would report our own
             # bugs as the caller's mistake.
             self._error(400, str(e), error="ActionError")
-            return
+            return None
         except Exception as e:
             logger.exception(f"Error capturing screenshot for snippet {snippet_id}")
             self.set_status(500)
             self.set_header("Content-Type", "application/json")
             self.write({"error": str(e), "traceback": traceback.format_exc()})
-            return
+            return None
 
         # Hand back what the render produced as well as how it looked. Carried in
         # a header so the body stays a plain image/png for existing consumers.
         payload = diagnostics.build(diagnostics.pop(snippet_id), console_lines)
+        return capture, diagnostics.encode(payload) if payload else ""
 
+    def _write_capture(self, capture: screenshot.Capture, diagnostics_header: str) -> None:
+        """Write *capture* as the response body, carrying diagnostics and the ``X-PLS-Capture`` report in headers.
+
+        One image comes back as ``image/png``; several — tiles of a tall page —
+        come back as JSON, because there is no honest way to put several images
+        in one image body.
+        """
         self.set_status(200)
-        if payload:
-            self.set_header(diagnostics.HEADER, diagnostics.encode(payload))
+        if diagnostics_header:
+            self.set_header(diagnostics.HEADER, diagnostics_header)
         self.set_header(screenshot.META_HEADER, screenshot.encode_meta(capture))
 
         if len(capture.images) > 1:
@@ -295,6 +427,127 @@ class ScreenshotEndpoint(RequestHandler):
 
         self.set_header("Content-Type", "image/png")
         self.write(capture.png or b"")
+
+
+class SnippetEditEndpoint(RequestHandler):
+    """Change part of a stored snippet without resending the whole thing.
+
+    ``POST /api/snippet/edit`` with ``{"snippet_id": ..., "old_str": ..., "new_str":
+    ...}`` replaces one occurrence of ``old_str`` in the snippet's code.
+
+    A draft loop otherwise costs a full rewrite per turn: the model resends every
+    line to change a colour. Substring editing makes the output proportional to
+    the change rather than to the snippet.
+
+    This works only because drafts are stored verbatim (``format=False``): if the
+    server reformatted on the way in, the text the model is matching against
+    would not be the text on disk, and ``old_str`` would miss for reasons no one
+    could see.
+
+    A draft is edited in place. Something the user has already been shown is
+    *forked* instead: the edit lands on a new draft and the live row is left
+    alone, so nothing changes under someone who is looking at it. Refusing these
+    outright was the earlier design, and it cost a wasted call on the commonest
+    shape there is — show, then "tweak that".
+    """
+
+    def _error(self, status: int, message: str, error: str | None = None) -> None:
+        """Write a JSON error response with *status*."""
+        self.set_status(status)
+        self.set_header("Content-Type", "application/json")
+        self.write({"error": error or message, "message": message})
+
+    def post(self):
+        """Apply a single substring replacement to a stored snippet."""
+        try:
+            body = json.loads(self.request.body.decode("utf-8"))
+        except ValueError:
+            self._error(400, "Request body must be JSON")
+            return
+
+        snippet_id = body.get("snippet_id", "")
+        old_str = body.get("old_str", "")
+        new_str = body.get("new_str", "")
+
+        if not snippet_id:
+            self._error(400, "Missing 'snippet_id' in request body")
+            return
+        if not old_str:
+            self._error(400, "Missing 'old_str' in request body")
+            return
+
+        # The saving this endpoint exists for is the gap between this number and
+        # what a full resend through /api/screenshot would have cost.
+        usage.record("edit", len(old_str) + len(new_str))
+
+        db = get_db()
+        snippet = db.get_snippet(snippet_id)
+        if snippet is None:
+            self._error(404, f"No snippet found with id {snippet_id!r}. Drafts are cleared after a while — screenshot the code again to get a fresh one.")
+            return
+        occurrences = snippet.app.count(old_str)
+        if occurrences == 0:
+            self._error(
+                400,
+                "old_str was not found in the code. It must match the stored text exactly, including indentation. "
+                "Screenshot it again if you have lost track of its current contents.",
+                error="NoMatch",
+            )
+            return
+        if occurrences > 1:
+            self._error(
+                400,
+                f"old_str appears {occurrences} times, so the edit is ambiguous. Include more surrounding context to make it unique.",
+                error="AmbiguousMatch",
+            )
+            return
+
+        edited = snippet.app.replace(old_str, new_str, 1)
+
+        # Cheap syntax gate. The alternative is finding out by launching a browser,
+        # which is the expensive way to learn about a missing bracket. Nothing is
+        # written so a rejected edit cannot leave anything in a worse state than the
+        # model last saw.
+        if syntax_error := ast_check(edited):
+            self._error(400, f"That edit would leave the code unparsable: {syntax_error}", error="SyntaxError")
+            return
+
+        # Run the edited code here so the result can go straight to `show`.
+        # promote_draft gates on status == "success", so without this an edit had to
+        # be screenshotted purely to stamp the row — a Playwright launch to change a
+        # colour. It also stops a stale status from the pre-edit render waving
+        # through code that no longer runs.
+        if run_error := validate_code(edited):
+            self._error(400, f"The edited code no longer runs: {run_error}", error="RuntimeError")
+            return
+
+        if snippet.draft:
+            db.update_snippet(snippet_id, app=edited, status="success")
+            result_id, forked = snippet_id, False
+        else:
+            # Already shown, so it must not change under the user. Fork instead:
+            # the edit lands on a new draft and the live snippet stays put until the
+            # model shows the fork.
+            fork = db.create_visualization(
+                app=edited,
+                name=snippet.name,
+                description=snippet.description,
+                method=snippet.method,
+                # Verbatim so the next old_str still matches. execute=False because
+                # validate_code above already ran it; running twice for one edit is
+                # the cost this endpoint exists to avoid.
+                format=False,
+                execute=False,
+                draft=True,
+            )
+            db.update_snippet(fork.id, status="success")
+            result_id, forked = fork.id, True
+
+        self.set_status(200)
+        self.set_header("Content-Type", "application/json")
+        # Deliberately no code echo: sending the whole snippet back would undo the
+        # saving the edit just made.
+        self.write({"id": result_id, "chars": len(edited), "forked": forked})
 
 
 class EvaluateEndpoint(RequestHandler):
@@ -332,6 +585,8 @@ class EvaluateEndpoint(RequestHandler):
             self.set_header("Content-Type", "application/json")
             self.write({"error": "ValueError", "message": "Missing 'code' in request body"})
             return
+
+        usage.record("evaluate", len(code))
 
         # Belt and braces: the MCP tool validates before calling, but this
         # endpoint is reachable on its own.
@@ -391,6 +646,11 @@ class HealthEndpoint(RequestHandler):
         The payload reports the interpreter running this server (``sys.prefix``
         and ``sys.executable``) so a manager can tell whether a server already
         listening on the port belongs to its own environment before adopting it.
+
+        It also carries the session's usage counters (issue #58), which is how
+        the cost of a working session gets measured rather than estimated. They
+        live here rather than in the ``show`` payload because this is a plain GET
+        nobody pays context for.
         """
         self.set_status(200)
         self.set_header("Content-Type", "application/json")
@@ -400,5 +660,6 @@ class HealthEndpoint(RequestHandler):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "prefix": sys.prefix,
                 "executable": sys.executable,
+                "usage": usage.snapshot(),
             }
         )

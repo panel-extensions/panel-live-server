@@ -54,9 +54,9 @@ NESTED_SCROLLER_PAGE = """
 TABBED_PAGE = """
 <body style="margin:0">
   <div class="bk-tabs">
-    <button class="bk-tab bk-active" onclick="pick(0)">Overview</button>
-    <button class="bk-tab" onclick="pick(1)">Sales</button>
-    <button class="bk-tab" onclick="pick(2)">Costs</button>
+    <div class="bk-tab bk-active" onclick="pick(0)">Overview</div>
+    <div class="bk-tab" onclick="pick(1)">Sales</div>
+    <div class="bk-tab" onclick="pick(2)">Costs</div>
   </div>
   <div class="bk panel" id="p0">OVERVIEW</div>
   <div class="bk panel" id="p1" hidden>SALES</div>

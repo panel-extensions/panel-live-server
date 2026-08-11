@@ -113,6 +113,14 @@ class Config(BaseModel):
         description="Max browser console messages collected during a screenshot capture before the rest are dropped",
     )
     chars_per_token: int = Field(default=4, description="Characters per token for the payload size estimate reported by show()")
+    draft_retention_hours: float = Field(
+        default=24.0,
+        description=(
+            "How long a screenshot draft is kept before being swept up. Drafts are no longer "
+            "deleted the moment their picture is taken, because show(draft_id=...) promotes one "
+            "without re-running it — so they need an expiry instead."
+        ),
+    )
 
 
 _config: Config | None = None
@@ -137,6 +145,7 @@ def get_config() -> Config:
             screenshot_max_actions=int(os.getenv("PANEL_LIVE_SERVER_SCREENSHOT_MAX_ACTIONS", "20")),
             brief_error_max_len=int(os.getenv("PANEL_LIVE_SERVER_BRIEF_ERROR_MAX_LEN", "140")),
             chars_per_token=int(os.getenv("PANEL_LIVE_SERVER_CHARS_PER_TOKEN", "4")),
+            draft_retention_hours=float(os.getenv("PANEL_LIVE_SERVER_DRAFT_RETENTION_HOURS", "24")),
             diagnostics_max_chars=int(os.getenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CHARS", "4000")),
             diagnostics_max_console_lines=int(os.getenv("PANEL_LIVE_SERVER_DIAGNOSTICS_MAX_CONSOLE_LINES", "200")),
         )

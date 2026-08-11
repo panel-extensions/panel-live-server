@@ -55,8 +55,13 @@ def test_packages_cli_filter():
 
 
 @pytest.mark.asyncio
-async def test_show_returns_payload_with_code():
-    """show(code, name, method) returns a JSON payload with expected fields."""
+async def test_show_returns_payload_without_echoing_the_code():
+    """show(code, name, method) returns a JSON payload with expected fields.
+
+    The code is deliberately absent (issue #58): it was the largest field in a
+    message the model re-reads in full, spent to populate a panel the user opens
+    rarely. The App fetches it by id instead.
+    """
     server_module._validation_cache.clear()
     code = "import panel as pn\npn.pane.Markdown('Hello').servable()"
     client = Client(mcp)
@@ -67,6 +72,7 @@ async def test_show_returns_payload_with_code():
         assert payload["tool"] == "show"
         assert "status" in payload
         assert "url" in payload or "message" in payload
+        assert "code" not in payload, "the code echo is what issue #58 removed"
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +373,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         async with Client(mcp) as client:
             with (
-                patch.object(server_module._client, "screenshot_code", return_value=(Capture(images=[("", b"\x89PNG")]), None, {})) as capture,
+                patch.object(server_module._client, "screenshot_code", return_value=(Capture(images=[("", b"\x89PNG")]), None, {}, "draft-7")) as capture,
                 patch.object(server_module._client, "create_snippet") as create,
             ):
                 result = await client.call_tool("screenshot", {"code": "1 + 1", "name": "Draft"})
@@ -396,7 +402,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         capture = Capture(images=[("", b"\x89PNG")])
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})) as shot:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "")) as shot:
                 await client.call_tool("screenshot", {"code": "1 + 1"})
 
         assert shot.call_args.kwargs["full_page"] is False
@@ -408,7 +414,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         capture = Capture(images=[("", b"\x89PNG")])
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})) as shot:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "")) as shot:
                 await client.call_tool("screenshot", {"code": "1 + 1", "full_page": True, "do": [{"click": "Sales"}]})
 
         assert shot.call_args.kwargs["full_page"] is True
@@ -421,7 +427,7 @@ class TestScreenshotDrafts:
         images = [("screen 1 of 2", b"\x89A"), ("screen 2 of 2", b"\x89B")]
         capture = Capture(images=images, total_tiles=2, captured_tiles=2)
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "")):
                 result = await client.call_tool("screenshot", {"code": "1 + 1", "full_page": True})
 
         assert [block.type for block in result.content[:4]] == ["text", "image", "text", "image"]
@@ -434,7 +440,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         capture = Capture(images=[("", b"\x89A")], controls=["Sales", "Costs", "Forecast"])
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "")):
                 result = await client.call_tool("screenshot", {"code": "1 + 1"})
 
         text = _report(result)
@@ -448,7 +454,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         capture = Capture(images=[("", b"\x89A")], total_tiles=4, captured_tiles=1)
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "")):
                 result = await client.call_tool("screenshot", {"code": "1 + 1"})
 
         text = _report(result)
@@ -461,7 +467,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         capture = Capture(images=[("screen 1 of 2", b"\x89A"), ("screen 2 of 2", b"\x89B")], total_tiles=6, captured_tiles=2)
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "")):
                 result = await client.call_tool("screenshot", {"code": "1 + 1", "full_page": True})
 
         text = _report(result)
@@ -474,7 +480,7 @@ class TestScreenshotDrafts:
         server_module._validation_cache.clear()
         capture = Capture(images=[("", b"\x89A")])
         async with Client(mcp) as client:
-            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {})):
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "")):
                 result = await client.call_tool("screenshot", {"code": "1 + 1"})
 
         text = _report(result)
@@ -482,11 +488,150 @@ class TestScreenshotDrafts:
         assert "BELOW THE FOLD" not in text
 
     @pytest.mark.asyncio
+    async def test_draft_id_travels_with_the_image(self):
+        """The id has to reach the model, or it cannot promote instead of resending."""
+        server_module._validation_cache.clear()
+        capture = Capture(images=[("", b"\x89PNG")])
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "screenshot_code", return_value=(capture, None, {}, "draft-7")):
+                result = await client.call_tool("screenshot", {"code": "1 + 1"})
+
+        reminder = result.content[-1].text
+        assert "draft-7" in reminder
+        assert "show(draft_id=...)" in reminder
+
+    @pytest.mark.asyncio
     async def test_missing_browser_is_reported_not_retried(self):
         """Rewriting the code cannot install Chromium, so this must not look fixable."""
         server_module._validation_cache.clear()
-        failure = (None, f"{BROWSER_UNAVAILABLE_PREFIX}Chromium is not installed. Run: pls install-browser", {})
+        failure = (None, f"{BROWSER_UNAVAILABLE_PREFIX}Chromium is not installed. Run: pls install-browser", {}, "")
         async with Client(mcp) as client:
             with patch.object(server_module._client, "screenshot_code", return_value=failure):
                 with pytest.raises(ToolError, match="pls install-browser"):
                     await client.call_tool("screenshot", {"code": "1 + 1"})
+
+
+class TestShowPromotesDrafts:
+    """show(draft_id=...) hands over an already-rendered draft (issue #58)."""
+
+    @pytest.mark.asyncio
+    async def test_show_advertises_the_draft_id_parameter(self):
+        """Promotion is unreachable unless the schema offers draft_id and code is optional."""
+        async with Client(mcp) as client:
+            tool = next(t for t in await client.list_tools() if t.name == "show")
+            assert "draft_id" in tool.inputSchema["properties"]
+            assert "code" not in tool.inputSchema.get("required", [])
+
+    @pytest.mark.asyncio
+    async def test_show_with_neither_code_nor_draft_id_is_an_error(self):
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError, match="draft_id="):
+                await client.call_tool("show", {})
+
+    @pytest.mark.asyncio
+    async def test_promotion_skips_validation_entirely(self):
+        """The draft already rendered in a real browser; re-checking it is the waste.
+
+        Deliberately passes code that would fail static validation, to prove the
+        promotion path never looks at it.
+        """
+        server_module._validation_cache.clear()
+        promoted = {"id": "draft-7", "url": "http://localhost:5077/view?id=draft-7", "code": "1 + 1\n"}
+
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "create_snippet", return_value=promoted) as create:
+                result = await client.call_tool("show", {"draft_id": "draft-7", "name": "Final"})
+
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "success"
+        assert payload["url"].endswith("view?id=draft-7")
+        # The App fetches code by id now, so the id is what the payload must carry.
+        assert payload["id"] == "draft-7"
+        assert "code" not in payload
+        assert create.call_args.kwargs["draft_id"] == "draft-7"
+        assert server_module._validation_cache == {}, "promotion must not validate"
+
+    @pytest.mark.asyncio
+    async def test_rejected_promotion_becomes_a_quiet_retry(self):
+        """A stale draft is the model's problem to fix, not an error box for the user."""
+        server_module._validation_cache.clear()
+        rejection = {"error": "ValueError", "message": "No draft found with id 'draft-7'."}
+
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "create_snippet", return_value=rejection):
+                result = await client.call_tool("show", {"draft_id": "draft-7"})
+
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "retrying"
+        assert payload["layer"] == "promotion"
+        assert "url" not in payload
+        assert "No draft found" in payload["error_message"]
+
+
+class TestEditTool:
+    """edit(snippet_id, old_str, new_str) keeps an iteration proportional to the change."""
+
+    @pytest.mark.asyncio
+    async def test_edit_is_exposed(self):
+        async with Client(mcp) as client:
+            tool = next(t for t in await client.list_tools() if t.name == "edit")
+            properties = tool.inputSchema["properties"]
+            assert {"snippet_id", "old_str", "new_str"} <= set(properties)
+            # new_str is omitted to delete, so it must not be mandatory.
+            assert "new_str" not in tool.inputSchema.get("required", [])
+
+    @pytest.mark.asyncio
+    async def test_successful_edit_points_at_the_re_render(self):
+        """An edit changes stored code but renders nothing, so the next step matters."""
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "edit_snippet", return_value={"id": "draft-7", "chars": 42, "forked": False}):
+                result = await client.call_tool("edit", {"snippet_id": "draft-7", "old_str": "a", "new_str": "b"})
+
+        text = result.content[0].text
+        assert "draft-7" in text
+        assert 'screenshot(draft_id="draft-7")' in text
+
+    @pytest.mark.asyncio
+    async def test_forked_edit_points_at_the_new_id(self):
+        """A fork returns an id the model has never seen; naming the old one would re-render the old version."""
+        forked = {"id": "draft-9", "chars": 42, "forked": True}
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "edit_snippet", return_value=forked):
+                result = await client.call_tool("edit", {"snippet_id": "shown-1", "old_str": "a", "new_str": "b"})
+
+        text = result.content[0].text
+        assert 'show(draft_id="draft-9")' in text
+        assert "shown-1 is untouched" in text
+        assert 'show(draft_id="shown-1")' not in text, "showing the old id would hand back the unchanged version"
+
+    @pytest.mark.asyncio
+    async def test_refused_edit_comes_back_as_guidance(self):
+        """The user has seen nothing, so a refusal is the model's to act on, not report."""
+        refusal = {"error": "AmbiguousMatch", "message": "old_str appears 3 times, so the edit is ambiguous."}
+        async with Client(mcp) as client:
+            with patch.object(server_module._client, "edit_snippet", return_value=refusal):
+                result = await client.call_tool("edit", {"snippet_id": "draft-7", "old_str": "a", "new_str": "b"})
+
+        text = result.content[0].text
+        assert "Edit not applied" in text
+        assert "ambiguous" in text
+        assert "Nothing was changed" in text
+
+    @pytest.mark.asyncio
+    async def test_screenshot_re_renders_a_draft_by_id(self):
+        """Without this an edited draft could only be seen by resending all its code."""
+        server_module._validation_cache.clear()
+        async with Client(mcp) as client:
+            with (
+                patch.object(server_module._client, "get_screenshot", return_value=(Capture(images=[("", b"\x89PNG")]), None, {})) as capture,
+                patch.object(server_module._client, "screenshot_code") as draft_capture,
+            ):
+                result = await client.call_tool("screenshot", {"draft_id": "draft-7"})
+
+        assert capture.call_args.args[0] == "draft-7"
+        assert not draft_capture.called, "re-rendering must not store a second draft"
+        assert result.content[0].type == "image"
+        # A draft gets draft advice, not the advice for something already shown.
+        reminder = result.content[-1].text
+        assert "REVIEW THIS DRAFT" in reminder
+        assert "draft-7" in reminder

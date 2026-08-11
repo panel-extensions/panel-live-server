@@ -27,11 +27,13 @@ Use whichever fits how you work, or run both.
 ## MCP Server: AI assistant integration
 
 Give Claude, GitHub Copilot, Cursor, or any MCP-compatible AI assistant the ability to render
-visualizations directly in your IDE, and to actually see what it just rendered. Two tools are
+visualizations directly in your IDE, and to actually see what it just rendered. Four tools are
 exposed:
 
 - **`show`**: validates the code (syntax, security, package availability, Panel extensions) and then executes it, returning a live, interactive visualization — no manual setup and no separate validation step required. The AI is instructed to reach for HoloViz packages (hvPlot, HoloViews, Panel) first, falling back to other well-known libraries only when needed
 - **`screenshot`**: renders a visualization and hands the picture back to the AI rather than to you. Point it at code the AI is still working on and it can check its own output privately, fixing and re-checking until it is right, so `show` only ever runs on the finished result. Point it at something already shown and it answers follow-up questions about how the chart looks by inspecting the actual image instead of guessing from raw data
+- **`edit`**: changes part of a stored snippet without resending all of it, so "make it red" costs one line rather than the whole chart. Editing something you are already looking at forks a new version instead of altering it underneath you
+- **`evaluate`**: runs code and returns its text output — what it printed and the value of its last line. No browser and no picture, so the AI can check a fact without rendering anything
 
 <video controls autoplay muted loop style="width: 100%; max-width: 100%;">
   <source src="assets/videos/panel-live-server-showcase-mcp.mp4" type="video/mp4">
@@ -159,12 +161,26 @@ These checks are a guardrail, not a sandbox — the server runs arbitrary Python
 privileges, so run it only in an environment you trust with that. See
 [Trust boundary](explanation/architecture.md#trust-boundary).
 
+### Iterate without resending everything
+
+Asking for a small change — a colour, a title, one line of a layout — goes through `edit`, which
+sends only the part that differs instead of the whole snippet. A shown visualization is never
+mutated underneath you: the change lands on a new version, and the one you were looking at stays
+at its own URL.
+
 ### See it, don't guess
 
 A `screenshot` tool captures a PNG of an already-rendered visualization in a headless browser
 and hands it to the AI. This lets the assistant correctly answer questions like "which bar is
 tallest?" or "where does it peak?" by looking at the actual rendered output, since plots
 routinely flip axes, reorder rows, or bin values differently than the raw data suggests.
+
+### Read a value without rendering
+
+Not every question needs a picture. An `evaluate` tool runs code in the server environment and
+returns its text output — what it printed and the value of its last line — so the AI can confirm a
+column name, check that an option is accepted, or read what range Bokeh computed without launching
+a browser. Nothing is stored, so these checks never reach your feed.
 
 ### MCP App UI
 
