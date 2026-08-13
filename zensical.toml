@@ -14,7 +14,10 @@ nav = [
     {"MCP Server" = "tutorials/mcp-server.md"}
   ]},
   {"How-to Guides" = [
-    {"Configure the Server" = "how-to/configure-server.md"}
+    {"Configure the Server" = "how-to/configure-server.md"},
+    {"Run as MCP Server" = "how-to/run-as-mcp-server.md"},
+    {"Customize AI Instructions" = "how-to/customize-ai-instructions.md"},
+    {"Troubleshoot Issues" = "how-to/troubleshooting.md"}
   ]},
   {"Explanation" = [
     {"Architecture" = "explanation/architecture.md"}
