@@ -240,6 +240,7 @@ for the per-installer command.
 
 ## Next Steps
 
-- **[Configure the server](../how-to/configure-server.md)**: custom port, transport, Jupyter proxy
+- **[Run as MCP Server](../how-to/run-as-mcp-server.md)**: custom port, transport, Jupyter proxy, and remote environments
+- **[Customize AI Instructions](../how-to/customize-ai-instructions.md)**: add your own rules to the AI prompts
 - **[Architecture](../explanation/architecture.md)**: understand the MCP + Panel server design
 - **[Examples](../examples.md)**: copy-paste snippets to try with your AI
