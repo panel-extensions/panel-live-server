@@ -136,6 +136,17 @@ screenshot(code="...", method="server")                  # a draft nobody has se
 screenshot(draft_id="def456")                            # that draft again, after an edit
 ```
 
+By default the capture is one screen, exactly as the page loaded — nothing scrolled, nothing
+clicked. Two more parameters opt into more:
+
+- **full_page**: capture the whole scrollable page as a run of viewport-sized tiles instead of
+  one shrunken strip, for content taller than the window.
+- **do**: a short list of steps — click, select, fill, press a key, or drag — run in the browser
+  before the picture is taken, so the AI can put the app into a state (open a tab, pick a filter,
+  zoom into a crowded plot) rather than only ever seeing whatever loaded first. Every capture also
+  reports what else is on the page and whether it continues past the fold, so the AI knows there
+  is more to ask for without having to guess.
+
 **Reviewing a draft.** The `code` form renders the snippet and captures it while keeping it out
 of the chat, out of the feed, and out of search. That gives the AI a private loop — render, look,
 fix, look again — and `show` gets called once, at the end, on work that is actually finished.

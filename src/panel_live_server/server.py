@@ -13,6 +13,7 @@ import signal
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -33,6 +34,7 @@ from panel_live_server.manager import PanelServerManager
 from panel_live_server.prompts import SCREENSHOT
 from panel_live_server.prompts import render_instructions
 from panel_live_server.prompts import render_prompt
+from panel_live_server.screenshot import Capture
 from panel_live_server.screenshot import is_browser_installed
 from panel_live_server.utils import ExtensionError
 from panel_live_server.utils import validate_extension_availability
@@ -763,6 +765,8 @@ async def screenshot(
     method: Literal["inline", "server"] = "inline",
     width: int = 1200,
     height: int = 800,
+    full_page: bool = False,
+    do: list[dict] | None = None,
     ctx: Context | None = None,
 ) -> ToolResult:
     """See a visualization as a PNG — returns the image to you (the LLM), not to the user.
@@ -831,6 +835,48 @@ async def screenshot(
     If the image is fine, always prefer it over recomputing (see CRITICAL RULE
     above — rendered output and raw data frequently disagree).
 
+    ════════════════════════════════════════════════════════════════════════
+    DRIVING THE APP BEFORE YOU LOOK:
+    ════════════════════════════════════════════════════════════════════════
+    By default you get one screen exactly as it loaded: nothing clicked, nothing
+    scrolled. A page taller than the window, and anything that only appears
+    after an interaction, are missing from that picture the same silent way an
+    empty chart is — so the reply TELLS you what is on the page and whether
+    content continues past the fold.
+
+    Read that line and decide. You know the question; this tool does not.
+      · `full_page=True` → the whole scrollable page, as a few readable
+                            screen-sized images rather than one shrunken strip
+      · `do=[...]`        → a short script run before the picture is taken:
+
+    ```
+    do=[{"click": "Reports"}]                                 # open a tab
+    do=[{"select": "Region", "value": "West"}]                # pick a dropdown option
+    do=[{"fill": "Search", "value": "acme"}, {"key": "Enter"}] # type, then submit
+    do=[{"click": "Box Zoom"}, {"drag": [300, 200, 500, 350]}] # zoom into a plot
+    ```
+
+    Each step names what to act on — the text on it, its tooltip, or its label —
+    not a CSS selector, and not a widget type. This reaches anything: a `Tabs`
+    strip, a `Button`, a `Select`, a `RadioButtonGroup`, or a Bokeh toolbar icon
+    (icons carry no visible text, only a tooltip — `"click": "Box Zoom"` finds
+    one by that tooltip). Steps run in order, each settling before the next.
+
+    `{"drag": [x0, y0, x1, y1]}` is viewport pixels, not a name — the one step
+    for a canvas or a plot region that has nothing to click by name. A crowded
+    scatter plot rendered with datashader often needs exactly this: click the
+    plot's "Box Zoom" tool, then drag a box over the crowded area, to see
+    whether the individual points resolve once zoomed. The tool is not active
+    by default — clicking it first is part of the script, not optional.
+
+    A step that matches nothing, or matches more than one thing, is refused
+    before any picture is taken, and the message names what IS on the page —
+    read it and try again with a more specific name.
+
+    Nothing is clicked unless you name it. A `Select` wired to filter data and
+    a `Select` wired to switch pages look identical until you act on one; this
+    tool never decides that for you.
+
     WHEN TO USE — a follow-up question about an already-shown visualization that
     can only be answered by seeing it (random/dynamic data, or visual position):
         · wave/line chart  → "where does it peak?", "where is the lowest dip?"
@@ -866,11 +912,20 @@ async def screenshot(
         Browser viewport width in pixels.
     height : int, default 800
         Browser viewport height in pixels.
+    full_page : bool, default False
+        Capture the whole scrollable page instead of the visible screen. Comes
+        back as several screen-sized images, each readable at native scale.
+    do : list[dict], optional
+        Steps to perform before capturing, in order — click, select, fill, press
+        a key, drag, or wait. See "DRIVING THE APP BEFORE YOU LOOK" above for
+        the shape of each step. Nothing is clicked unless listed here.
 
     Returns
     -------
     Image
-        PNG screenshot of the rendered visualization.
+        PNG screenshot of the rendered visualization — one per screen when
+        ``full_page`` is set — plus a note naming what else is on the page and
+        whether content continues past the fold.
     """
     if not snippet_id and not code and not draft_id:
         raise ToolError(
@@ -888,7 +943,9 @@ async def screenshot(
         if not validation["valid"]:
             return _draft_failure(validation.get("layer", "validation"), validation.get("message", "Validation failed."))
 
-        png, error, captured, new_draft_id = await asyncio.to_thread(_client.screenshot_code, code, name, "", method, width, height)
+        capture, error, captured, new_draft_id = await asyncio.to_thread(
+            _client.screenshot_code, code, name=name, method=method, width=width, height=height, full_page=full_page, do=do
+        )
         if error and error.startswith(BROWSER_UNAVAILABLE_PREFIX):
             # No amount of rewriting fixes a missing browser — surface it instead of looping.
             raise ToolError(f"Screenshot failed: {error.removeprefix(BROWSER_UNAVAILABLE_PREFIX)}")
@@ -902,23 +959,29 @@ async def screenshot(
     elif draft_id:
         # Re-render of a draft that already exists, picking up any edits. The GET
         # path works unchanged because get_snippet does not filter drafts out.
-        png, error, captured = await asyncio.to_thread(_client.get_screenshot, draft_id, width, height)
+        capture, error, captured = await asyncio.to_thread(_client.get_screenshot, draft_id, width=width, height=height, full_page=full_page, do=do)
         if error:
             # Still a draft, so still the model's problem rather than the user's.
             return _draft_failure("render", error)
-        reminder = f'{render_prompt(SCREENSHOT, "draft_review")}\n\nDraft id for this image: {draft_id}'
+        reminder = f"{render_prompt(SCREENSHOT, 'draft_review')}\n\nDraft id for this image: {draft_id}"
     else:
         # Capture the existing snippet's rendered /view page as a PNG.
         # The endpoint 404s if the id is unknown.
-        png, error, captured = await asyncio.to_thread(_client.get_screenshot, snippet_id, width, height)
+        capture, error, captured = await asyncio.to_thread(_client.get_screenshot, snippet_id, width=width, height=height, full_page=full_page, do=do)
         if error:
             raise ToolError(f"Screenshot failed: {error}")
         reminder = render_prompt(SCREENSHOT, "shown_image")
 
-    if not png:
+    if not capture or not capture.images:
         raise ToolError("Screenshot capture returned no image data.")
 
-    content = [Image(data=png, format="png").to_image_content()]
+    content: list[Any] = []
+    for label, png in capture.images:
+        # Label each image when there is more than one, so the screens and pages
+        # of a dashboard do not arrive as an unattributed pile of pictures.
+        if label and len(capture.images) > 1:
+            content.append(TextContent(type="text", text=f"--- {label} ---"))
+        content.append(Image(data=png, format="png").to_image_content())
 
     # Anything the snippet printed, and anything the browser logged, comes back
     # as text so it can be read directly rather than rendered into the picture
@@ -927,5 +990,43 @@ async def screenshot(
     if output:
         content.append(TextContent(type="text", text=f"--- output ---\n{output}"))
 
+    if report := _capture_report(capture):
+        content.append(TextContent(type="text", text=report))
+
     content.append(TextContent(type="text", text=reminder))
     return ToolResult(content=content)
+
+
+def _capture_report(capture: Capture) -> str:
+    """Name what could be acted on, and what is not in the images, if anything.
+
+    A control never clicked, and content past the fold, are absent from a
+    screenshot in exactly the way an empty chart is — silently. Nothing in a
+    rectangle of pixels says "there is more" or "there is a Box Zoom tool here".
+    So the browser is asked, and the answer is written down beside the picture.
+
+    Both facts are read off the loaded page for the price of two locator calls,
+    which is why this runs on every capture rather than being something to opt
+    into. What to *do* about it is the model's call, not ours: it knows the
+    question being asked and can tell "is the top chart blue?" from "zoom in and
+    check if the points resolve". Hence a report, not more images.
+
+    Returns ``""`` when there is nothing to add — the common case for an
+    ordinary static chart, which should cost no extra words at all.
+    """
+    notes = []
+
+    if capture.controls:
+        example = capture.controls[0]
+        notes.append(f"CONTROLS: {', '.join(capture.controls)}. " f"""Call screenshot(do=[{{"click": "{example}"}}]) to act on one.""")
+
+    if capture.total_tiles > capture.captured_tiles:
+        more = capture.total_tiles - capture.captured_tiles
+        screens = "screen" if more == 1 else "screens"
+        if capture.captured_tiles > 1:
+            # Already tiling — asking for full_page again would change nothing.
+            notes.append(f"BELOW THE FOLD: {more} more {screens} of content follow the last image; the per-call tile cap stopped there.")
+        else:
+            notes.append(f"BELOW THE FOLD: {more} more {screens} of content continue past this image. Call screenshot(full_page=True) to see them.")
+
+    return "\n".join(notes)

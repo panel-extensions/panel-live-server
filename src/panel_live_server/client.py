@@ -5,16 +5,28 @@ via its REST API. The client can be used with either a locally-managed subproces
 or a remote server instance.
 """
 
+import base64
+import json
 import logging
 
 import requests  # type: ignore[import-untyped]
 
 from panel_live_server import diagnostics
+from panel_live_server import screenshot
 
 logger = logging.getLogger(__name__)
 
 # Marks a screenshot failure caused by the missing headless browser rather than by the code.
 BROWSER_UNAVAILABLE_PREFIX = "PlaywrightUnavailable: "
+
+#: What ``get_screenshot`` hands back: the capture, an error message, and
+#: whatever the render printed or the browser logged. No draft id — a GET
+#: renders a snippet that already exists.
+ScreenshotResult = tuple[screenshot.Capture | None, str | None, dict[str, str]]
+
+#: What ``screenshot_code`` hands back: the same three, plus the id of the
+#: retained draft so ``show(draft_id=...)`` can promote it without re-running it.
+DraftScreenshotResult = tuple[screenshot.Capture | None, str | None, dict[str, str], str]
 
 
 class DisplayClient:
@@ -189,16 +201,19 @@ class DisplayClient:
         width: int | None = None,
         height: int | None = None,
         full_page: bool = False,
-    ) -> tuple[bytes | None, str | None, dict[str, str]]:
-        """Fetch a PNG screenshot of a snippet's rendered ``/view`` page.
+        do: list | None = None,
+    ) -> ScreenshotResult:
+        """Fetch a screenshot of a snippet's rendered ``/view`` page.
 
         Returns
         -------
-        tuple[bytes | None, str | None, dict[str, str]]
-            ``(png_bytes, None, diagnostics)`` on success, or
+        ScreenshotResult
+            ``(capture, None, diagnostics)`` on success, or
             ``(None, error_message, {})`` on failure.
         """
-        params: dict[str, str | int] = {"id": snippet_id, "full_page": str(full_page).lower()}
+        # A query string cannot carry a list, so `do` rides as JSON text — the
+        # server decodes it back on the way in.
+        params: dict[str, str | int] = {"id": snippet_id, "full_page": str(full_page).lower(), "do": json.dumps(do) if do else ""}
         if width:
             params["width"] = width
         if height:
@@ -217,8 +232,9 @@ class DisplayClient:
         width: int | None = None,
         height: int | None = None,
         full_page: bool = False,
-    ) -> tuple[bytes | None, str | None, dict[str, str], str]:
-        """Render *code* and return a PNG of it without showing it to the user.
+        do: list | None = None,
+    ) -> DraftScreenshotResult:
+        """Render *code* and return a screenshot of it without showing it to the user.
 
         Backs the draft path of the MCP ``screenshot`` tool (issue #43): the
         server stores the code as a draft, kept out of the feed and out of search,
@@ -229,16 +245,17 @@ class DisplayClient:
 
         Returns
         -------
-        tuple[bytes | None, str | None, dict[str, str], str]
-            ``(png_bytes, None, diagnostics, draft_id)`` on success, or
+        DraftScreenshotResult
+            ``(capture, None, diagnostics, draft_id)`` on success, or
             ``(None, error_message, {}, "")`` on failure.
         """
-        payload: dict[str, str | int | bool] = {
+        payload: dict[str, str | int | bool | list | None] = {
             "code": code,
             "name": name,
             "description": description,
             "method": method,
             "full_page": full_page,
+            "do": do,
         }
         if width:
             payload["width"] = width
@@ -247,13 +264,17 @@ class DisplayClient:
 
         return self._screenshot_request("POST", "draft", json=payload)
 
-    def _screenshot_request(self, verb: str, label: str, **kwargs) -> tuple[bytes | None, str | None, dict[str, str], str]:
-        """Call ``/api/screenshot`` and unpack the PNG-or-error response.
+    def _screenshot_request(self, verb: str, label: str, **kwargs) -> DraftScreenshotResult:
+        """Call ``/api/screenshot`` and unpack the image-or-error response.
+
+        One image comes back as ``image/png``; several — tiles of a tall page —
+        come back as JSON carrying a base64 PNG each. Either way the report of
+        what was *not* captured rides along in the ``X-PLS-Capture`` header.
 
         Returns
         -------
-        tuple[bytes | None, str | None, dict[str, str], str]
-            ``(png, error, diagnostics, draft_id)``. The third element holds
+        DraftScreenshotResult
+            ``(capture, error, diagnostics, draft_id)``. The third element holds
             whatever the render printed and whatever the browser logged; it is
             ``{}`` when the render was silent or the request failed. The fourth is
             the id of the retained draft, empty for anything but a POST.
@@ -269,13 +290,21 @@ class DisplayClient:
             logger.warning("Screenshot request error for %s: %s", label, e)
             return None, f"Screenshot request failed: {e}", {}, ""
 
-        if response.status_code == 200 and "image/png" in response.headers.get("Content-Type", ""):
-            return (
-                response.content,
-                None,
-                diagnostics.decode(response.headers.get(diagnostics.HEADER, "")),
-                response.headers.get(diagnostics.DRAFT_ID_HEADER, ""),
-            )
+        if response.status_code == 200:
+            content_type = response.headers.get("Content-Type", "")
+            meta = screenshot.decode_meta(response.headers.get(screenshot.META_HEADER, ""))
+            notes = diagnostics.decode(response.headers.get(diagnostics.HEADER, ""))
+            draft_id = response.headers.get(diagnostics.DRAFT_ID_HEADER, "")
+            if "image/png" in content_type:
+                capture = screenshot.Capture(images=[("", response.content)])
+                return screenshot.apply_meta(capture, meta), None, notes, draft_id
+            if "application/json" in content_type:
+                try:
+                    images = [(i.get("label", ""), base64.b64decode(i["png"])) for i in response.json()["images"]]
+                except Exception as e:
+                    logger.warning("Malformed multi-image screenshot response for %s: %s", label, e)
+                    return None, f"Malformed multi-image screenshot response: {e}", {}, ""
+                return screenshot.apply_meta(screenshot.Capture(images=images), meta), None, notes, draft_id
 
         try:
             body = response.json()

@@ -34,7 +34,10 @@ You should see four tools in the response:
 - `show`: validates the code, renders the visualization, and returns a live URL
 - `screenshot`: takes a picture of a visualization for the AI to look at — either a draft it
   has not shown you yet, so it can check its own work first, or one you already have, so it can
-  answer questions about how it looks
+  answer questions about how it looks. It captures one screen exactly as loaded by default, and
+  says when there is more — what else is on the page and whether content continues past the fold
+  — so the AI can ask for the rest of a scrolling page, or click/select/drag its way to a
+  particular state, only when the question needs it
 - `edit`: changes part of a snippet without resending all of it. Asking for a different colour
   costs the AI one line instead of the whole chart
 - `evaluate`: runs code and hands back its text output — what it printed and the value of its

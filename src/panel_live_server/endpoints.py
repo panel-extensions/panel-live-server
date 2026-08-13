@@ -4,6 +4,7 @@ This module implements Tornado RequestHandler classes that provide
 HTTP endpoints for creating visualizations and checking server health.
 """
 
+import base64
 import contextlib
 import io
 import json
@@ -220,7 +221,18 @@ class ScreenshotEndpoint(RequestHandler):
     width, height : int
         Viewport size in px (default from config).
     full_page : bool
-        Capture the full scrollable page rather than just the viewport.
+        Capture the whole scrollable page as a run of viewport-sized tiles
+        rather than the single visible screen. Defaults to false.
+    do : str (GET, JSON-encoded) / list (POST)
+        Steps to perform before capturing — see :func:`screenshot.capture_pages`.
+        Unset means nothing is clicked; the page is captured as it loaded.
+
+    A single capture comes back as ``image/png``. Anything that produced more
+    than one image — several tiles of a tall page — comes back as JSON instead,
+    one base64 PNG per image, because there is no honest way to put several
+    images in one image body. Either way the ``X-PLS-Capture`` header reports
+    what was *not* returned: the controls found on the page, and how many tiles
+    the content actually needs.
     """
 
     def _error(self, status: int, message: str, error: str | None = None) -> None:
@@ -240,13 +252,23 @@ class ScreenshotEndpoint(RequestHandler):
             self._error(404, f"Snippet {snippet_id} not found")
             return
 
+        # A query string cannot carry a list, so ``do`` travels as JSON text here
+        # — the one place GET and POST genuinely differ.
+        raw_do = self.get_argument("do", "")
+        try:
+            do = json.loads(raw_do) if raw_do else None
+        except ValueError:
+            self._error(400, 'do must be JSON-encoded, e.g. do=[{"click": "Reports"}]', error="ActionError")
+            return
+
         if captured := await self._capture(
             snippet_id,
             width=self.get_argument("width", ""),
             height=self.get_argument("height", ""),
             full_page=self.get_argument("full_page", "false"),
+            do=do,
         ):
-            self._write_png(*captured)
+            self._write_capture(*captured)
 
     async def post(self):
         """Store the posted code as a draft, capture it, and hand back the picture."""
@@ -305,6 +327,7 @@ class ScreenshotEndpoint(RequestHandler):
             width=str(body.get("width", "")),
             height=str(body.get("height", "")),
             full_page=str(body.get("full_page", False)),
+            do=body.get("do"),
         )
         if captured is None:
             # Nothing usable came back, so the row is of no further interest.
@@ -324,18 +347,18 @@ class ScreenshotEndpoint(RequestHandler):
         # Kept, not deleted: show(draft_id=...) promotes this row without
         # re-running it, which is what removes the final redundant execution.
         self.set_header(diagnostics.DRAFT_ID_HEADER, snippet.id)
-        self._write_png(*captured)
+        self._write_capture(*captured)
 
-    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str) -> tuple[bytes, str] | None:
-        """Screenshot ``/view?id=<snippet_id>``, returning the PNG and its diagnostics.
+    async def _capture(self, snippet_id: str, *, width: str, height: str, full_page: str, do: list | None = None) -> tuple[screenshot.Capture, str] | None:
+        """Screenshot ``/view?id=<snippet_id>``, returning the capture and its diagnostics.
 
-        Returns ``(png, diagnostics_header)`` on success, or ``None`` when the
-        capture failed — in which case an error response has already been written
-        and the caller should return immediately.
+        Returns ``(capture, diagnostics_header)`` on success, or ``None`` when
+        the capture failed — in which case an error response has already been
+        written and the caller should return immediately.
 
-        The response is deliberately not written here: the POST path has to inspect
-        the row this render just stamped before it can decide whether the caller
-        gets a picture or a traceback.
+        The response is deliberately not written here: the POST path has to
+        inspect the row this render just stamped before it can decide whether
+        the caller gets a picture or a traceback.
         """
         config = get_config()
         try:
@@ -349,19 +372,29 @@ class ScreenshotEndpoint(RequestHandler):
 
         console_lines: list[str] = []
         try:
-            png = await screenshot.capture_png(
+            capture = await screenshot.capture_pages(
                 view_url,
                 width=viewport_width,
                 height=viewport_height,
                 full_page=full_page.lower() in ("1", "true", "yes"),
                 settle_ms=config.screenshot_settle_ms,
                 timeout_ms=config.screenshot_timeout_ms,
+                do=do,
+                max_tiles=config.screenshot_max_tiles,
+                max_actions=config.screenshot_max_actions,
                 console_sink=console_lines,
             )
         except screenshot.PlaywrightUnavailableError as e:
             self.set_status(503)
             self.set_header("Content-Type", "application/json")
             self.write({"error": "PlaywrightUnavailable", "message": str(e)})
+            return None
+        except screenshot.ActionError as e:
+            # A step in `do` was malformed or named something the page does not
+            # have — the caller can fix that, so say what is actually there.
+            # Deliberately not a bare ``ValueError``: that would report our own
+            # bugs as the caller's mistake.
+            self._error(400, str(e), error="ActionError")
             return None
         except Exception as e:
             logger.exception(f"Error capturing screenshot for snippet {snippet_id}")
@@ -373,15 +406,27 @@ class ScreenshotEndpoint(RequestHandler):
         # Hand back what the render produced as well as how it looked. Carried in
         # a header so the body stays a plain image/png for existing consumers.
         payload = diagnostics.build(diagnostics.pop(snippet_id), console_lines)
-        return png, diagnostics.encode(payload) if payload else ""
+        return capture, diagnostics.encode(payload) if payload else ""
 
-    def _write_png(self, png: bytes, diagnostics_header: str) -> None:
-        """Write *png* as the response body, carrying diagnostics in a header."""
+    def _write_capture(self, capture: screenshot.Capture, diagnostics_header: str) -> None:
+        """Write *capture* as the response body, carrying diagnostics and the ``X-PLS-Capture`` report in headers.
+
+        One image comes back as ``image/png``; several — tiles of a tall page —
+        come back as JSON, because there is no honest way to put several images
+        in one image body.
+        """
         self.set_status(200)
-        self.set_header("Content-Type", "image/png")
         if diagnostics_header:
             self.set_header(diagnostics.HEADER, diagnostics_header)
-        self.write(png)
+        self.set_header(screenshot.META_HEADER, screenshot.encode_meta(capture))
+
+        if len(capture.images) > 1:
+            self.set_header("Content-Type", "application/json")
+            self.write({"images": [{"label": label, "png": base64.b64encode(png).decode("ascii")} for label, png in capture.images]})
+            return
+
+        self.set_header("Content-Type", "image/png")
+        self.write(capture.png or b"")
 
 
 class SnippetEditEndpoint(RequestHandler):
