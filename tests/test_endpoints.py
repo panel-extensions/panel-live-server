@@ -10,6 +10,7 @@ from tornado.testing import AsyncHTTPTestCase
 from tornado.web import Application
 
 import panel_live_server.endpoints as endpoints_module
+import panel_live_server.screenshot as screenshot_module
 from panel_live_server import usage
 from panel_live_server.database import SnippetDatabase
 from panel_live_server.endpoints import HealthEndpoint
@@ -316,9 +317,9 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
 
         async def fake_capture(url, **kwargs):
             captured["url"] = url
-            return b"\x89PNG-bytes"
+            return screenshot_module.Capture(images=[("", b"\x89PNG-bytes")])
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self._post({"code": "1 + 1", "method": "inline"})
 
         assert response.code == 200
@@ -338,9 +339,9 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
         """
 
         async def fake_capture(url, **kwargs):
-            return b"\x89PNG"
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self._post({"code": "1 + 1", "method": "inline"})
 
         assert response.code == 200
@@ -350,9 +351,9 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
         """Retained drafts need an expiry, and activity is when it is worth applying."""
 
         async def fake_capture(url, **kwargs):
-            return b"\x89PNG"
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             self._post({"code": "1 + 1"})
 
         assert self.fake_db.swept, "expected a sweep before the draft was stored"
@@ -363,7 +364,7 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
         async def boom(url, **kwargs):
             raise RuntimeError("browser exploded")
 
-        with patch("panel_live_server.screenshot.capture_png", boom):
+        with patch("panel_live_server.screenshot.capture_pages", boom):
             response = self._post({"code": "1 + 1"})
 
         assert response.code == 500
@@ -379,9 +380,9 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
         self.fake_db.error_message = "NameError: name 'nope' is not defined"
 
         async def fake_capture(url, **kwargs):
-            return b"\x89PNG"
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self._post({"code": "nope"})
 
         assert response.code == 400
@@ -413,6 +414,72 @@ class TestScreenshotEndpointDrafts(AsyncHTTPTestCase):
 
         assert response.code == 404
 
+    def test_the_default_capture_is_one_screen_of_the_current_page(self) -> None:
+        """Capturing everything by default is what floods a caller's context."""
+        seen: dict = {}
+
+        async def fake_capture(url, **kwargs):
+            seen.update(kwargs)
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            self._post({"code": "1 + 1"})
+
+        assert seen["full_page"] is False
+        assert seen["do"] is None
+
+    def test_naming_a_control_the_page_lacks_is_a_400_listing_the_real_ones(self) -> None:
+        """A fixable mistake, so it must not arrive as a 500 with a traceback."""
+
+        async def fake_capture(url, **kwargs):
+            raise screenshot_module.ActionError("No element matches 'Profit'. On this page: Sales, Costs.")
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            response = self._post({"code": "1 + 1", "do": [{"click": "Profit"}]})
+
+        assert response.code == 400
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["error"] == "ActionError"
+        assert "Sales, Costs" in payload["message"]
+
+    def test_an_ordinary_value_error_is_still_a_500(self) -> None:
+        """Catching bare ValueError here would report our own bugs as the caller's."""
+
+        async def boom(url, **kwargs):
+            raise ValueError("something inside the capture is broken")
+
+        with patch("panel_live_server.screenshot.capture_pages", boom):
+            response = self._post({"code": "1 + 1"})
+
+        assert response.code == 500
+
+    def test_several_images_come_back_as_json_not_one_png(self) -> None:
+        """There is no honest way to put several pictures in one image body."""
+
+        async def fake_capture(url, **kwargs):
+            return screenshot_module.Capture(images=[("screen 1 of 2", b"\x89A"), ("screen 2 of 2", b"\x89B")], total_tiles=2, captured_tiles=2)
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            response = self._post({"code": "1 + 1", "full_page": True})
+
+        assert response.code == 200
+        assert response.headers["Content-Type"].startswith("application/json")
+        assert [i["label"] for i in json.loads(response.body.decode("utf-8"))["images"]] == ["screen 1 of 2", "screen 2 of 2"]
+
+    def test_the_report_rides_along_with_a_single_png(self) -> None:
+        """One image plus 'there are three more pages' is the whole point."""
+
+        async def fake_capture(url, **kwargs):
+            return screenshot_module.Capture(images=[("", b"\x89PNG")], controls=["Sales", "Costs"], total_tiles=3, captured_tiles=1)
+
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
+            response = self._post({"code": "1 + 1"})
+
+        assert response.headers["Content-Type"] == "image/png"
+        meta = screenshot_module.decode_meta(response.headers[screenshot_module.META_HEADER])
+        assert meta["controls"] == ["Sales", "Costs"]
+        assert meta["total_tiles"] == 3
+
 
 class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
     """A draft is retained for promotion but must stay invisible to the user."""
@@ -443,11 +510,11 @@ class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
         async def fake_capture(url, **kwargs):
             # Mid-capture the row must exist — the browser has to have a page to load.
             seen_ids.append([s.id for s in self.db.list_snippets(include_drafts=True)])
-            return b"\x89PNG"
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
 
         assert self.db.list_snippets() == []
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self.fetch(
                 "/api/screenshot",
                 method="POST",
@@ -467,9 +534,9 @@ class TestScreenshotDraftLeavesNoTrace(AsyncHTTPTestCase):
         """Promotion is the moment a draft becomes the user's, without being re-run."""
 
         async def fake_capture(url, **kwargs):
-            return b"\x89PNG"
+            return screenshot_module.Capture(images=[("", b"\x89PNG")])
 
-        with patch("panel_live_server.screenshot.capture_png", fake_capture):
+        with patch("panel_live_server.screenshot.capture_pages", fake_capture):
             response = self.fetch(
                 "/api/screenshot",
                 method="POST",
