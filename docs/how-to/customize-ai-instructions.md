@@ -12,10 +12,10 @@ Every section can be customised:
 | `intro` | The one-line description of what the server does |
 | `workflow` | How `show`, `screenshot`, `edit`, and `evaluate` relate, and that validation is automatic |
 | `file_policy` | Not writing visualization code out to files |
-| `library_selection` | Which plotting libraries the AI should reach for, the `pn.extension(...)` gotcha, and when to defer to the `developing-with-holoviz` skill |
+| `library_selection` | Which plotting libraries the AI should reach for, and when to defer to the `developing-with-holoviz` skill |
 | `rendering` | Panel reactive patterns, and clients that link out instead of embedding |
 | `output` | How the returned URL is presented back to you |
-| `errors` | What snippet code must never do, and the two failure modes that never raise an error at all |
+| `errors` | What `SecurityError` and `ValidationError` mean |
 | `screenshot` | What the AI looks for in a screenshot, both when checking its own draft and when answering questions about a chart you already have |
 
 `library_selection` and `output` are the ones most people want; they are pure

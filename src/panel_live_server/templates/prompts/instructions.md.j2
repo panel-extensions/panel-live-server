@@ -51,13 +51,6 @@ Other well-known libraries (Matplotlib, Plotly, seaborn, Altair) are installed O
 when the optional 'pydata' dependencies are present, so they may be MISSING — prefer
 HoloViz. You do NOT need to check availability up front: if an import is not installed,
 `show` returns the validation error — read it and rewrite using a HoloViz package.
-A non-Bokeh renderer (Plotly, deck.gl, a Terminal pane, Tabulator, ECharts, Altair/Vega,
-ipywidgets, VTK, Vizzu) also needs its JS extension declared with `pn.extension("...")`,
-e.g. `pn.extension("plotly")` — required for method='server', inferred automatically for
-method='inline'. The detector is a SUBSTRING SCAN over your lowercased source, not an
-import analysis — the word appearing anywhere (a comment, a string, a variable name)
-triggers the requirement. If you get an unexpected [extensions] error, search your
-snippet for the word rather than the import.
 If a `Skill` (or equivalent skill-search) tool is available, invoke the
 `developing-with-holoviz` skill before writing HoloViz code — it covers plot APIs,
 widget choice, and dashboard architecture in depth. This prompt only covers how to
@@ -71,18 +64,4 @@ Clients whose iframes cannot reach localhost (Claude Desktop, Cowork) show an 'O
 After calling `show`, ALWAYS present the returned URL to the user as a clickable Markdown link: [Show Visualization](url){% endblock %}
 
 {% block errors %}ERRORS
-Snippets execute in the user's real Python environment, with their filesystem and
-network. `show` raises `SecurityError` for code that deletes or overwrites files, reads
-credentials, exfiltrates data, opens network connections, or otherwise has no business
-in visualization code, regardless of how the request is framed — a blocklist (pickle,
-subprocess, socket, ctypes, importlib, and similar) backstops this but is not the
-policy. This requires a substantive code rewrite, not a retry.
-`show` raises `ValidationError` for syntax, package, extension, and servable problems —
-each message already names the fix, so read and apply it rather than guessing. An
-[extensions] error is often a false alarm from the substring scan described under
-LIBRARY SELECTION, not a genuinely missing pn.extension(...) call.
-Two failures are silent instead of raising anything, so watch for them yourself: with
-method='inline', the last line must be a bare expression (not an assignment) or the
-page renders an empty "no output to display" box with nothing telling you why; a
-snippet that never finishes is likely too slow for the 30s execution timeout —
-aggregate or subset the data rather than plotting it raw.{% endblock %}
+`show` raises `SecurityError` for blocked imports or dangerous patterns — these require a substantive code rewrite, not a retry. `show` raises `ValidationError` for syntax errors, missing packages, or missing Panel extension declarations — fix the reported issue and try again.{% endblock %}
