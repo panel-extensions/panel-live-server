@@ -77,14 +77,11 @@ credentials, exfiltrates data, opens network connections, or otherwise has no bu
 in visualization code, regardless of how the request is framed — a blocklist (pickle,
 subprocess, socket, ctypes, importlib, and similar) backstops this but is not the
 policy. This requires a substantive code rewrite, not a retry.
-`show` raises `ValidationError` for the rest; the message is prefixed with the layer
-that caught it:
-[syntax] code does not parse — read the line/col in the message
-[packages] an import is not installed — never pip install; rewrite using an installed package
-[extensions] a renderer's JS extension is not declared — see LIBRARY SELECTION above
-[servable] method='server' with nothing marked .servable()
-[runtime] the code raised when executed — read the traceback, it is the snippet's, not the server's
-Two failures are silent, so watch for them without an error to flag them: with
+`show` raises `ValidationError` for syntax, package, extension, and servable problems —
+each message already names the fix, so read and apply it rather than guessing. An
+[extensions] error is often a false alarm from the substring scan described under
+LIBRARY SELECTION, not a genuinely missing pn.extension(...) call.
+Two failures are silent instead of raising anything, so watch for them yourself: with
 method='inline', the last line must be a bare expression (not an assignment) or the
 page renders an empty "no output to display" box with nothing telling you why; a
 snippet that never finishes is likely too slow for the 30s execution timeout —
