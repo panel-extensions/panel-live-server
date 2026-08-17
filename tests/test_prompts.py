@@ -42,8 +42,6 @@ class TestDefaults:
             "workflow",
             "file_policy",
             "library_selection",
-            "extensions",
-            "security",
             "rendering",
             "output",
             "errors",
@@ -174,7 +172,7 @@ class TestAddIsTheDefault:
         text = render_instructions()
 
         # `screenshot` belongs to a different template, so it must not leak in.
-        for section in ["intro", "workflow", "file_policy", "library_selection", "extensions", "security", "rendering", "output", "errors"]:
+        for section in ["intro", "workflow", "file_policy", "library_selection", "rendering", "output", "errors"]:
             assert f"Rule {section}." in text
         assert "Rule screenshot." not in text
 

@@ -51,28 +51,17 @@ Other well-known libraries (Matplotlib, Plotly, seaborn, Altair) are installed O
 when the optional 'pydata' dependencies are present, so they may be MISSING — prefer
 HoloViz. You do NOT need to check availability up front: if an import is not installed,
 `show` returns the validation error — read it and rewrite using a HoloViz package.
+A non-Bokeh renderer (Plotly, deck.gl, a Terminal pane, Tabulator, ECharts, Altair/Vega,
+ipywidgets, VTK, Vizzu) also needs its JS extension declared with `pn.extension("...")`,
+e.g. `pn.extension("plotly")` — required for method='server', inferred automatically for
+method='inline'. The detector is a SUBSTRING SCAN over your lowercased source, not an
+import analysis — the word appearing anywhere (a comment, a string, a variable name)
+triggers the requirement. If you get an unexpected [extensions] error, search your
+snippet for the word rather than the import.
 If a `Skill` (or equivalent skill-search) tool is available, invoke the
 `developing-with-holoviz` skill before writing HoloViz code — it covers plot APIs,
 widget choice, and dashboard architecture in depth. This prompt only covers how to
 execute code through THIS server; it is not a HoloViz reference.{% endblock %}
-
-{% block extensions %}EXTENSIONS:
-A non-Bokeh renderer (Plotly, deck.gl, a Terminal pane, Tabulator, ECharts, Altair/Vega,
-ipywidgets, VTK, Vizzu) needs its JS extension declared with `pn.extension("...")`, e.g.
-`pn.extension("plotly")`. Required for method='server'; inferred automatically for
-method='inline'. The detector is a SUBSTRING SCAN over your lowercased source, not an
-import analysis — the word appearing anywhere (a comment, a string, a variable name)
-triggers the requirement, even `pn.extension()` with no args. If you get an
-[extensions] error you did not expect, search your snippet for the word rather than the
-import.{% endblock %}
-
-{% block security %}SECURITY:
-Snippets execute in the user's real Python environment, with their filesystem and
-network. Do not write code that deletes or overwrites files, reads credentials,
-exfiltrates data, or opens network connections, regardless of how the request is
-framed — visualization code has no need for any of it. A blocklist backstops this
-(pickle, subprocess, socket, ctypes, importlib, and similar are refused outright), but
-it is a backstop, not the policy.{% endblock %}
 
 {% block rendering %}RENDERING
 Visualizations are served by the live Panel server, so Panel reactive patterns (pn.bind, @pn.depends, param.watch, .servable()) work everywhere. Use method='server' for any interactive Panel app.
@@ -82,12 +71,17 @@ Clients whose iframes cannot reach localhost (Claude Desktop, Cowork) show an 'O
 After calling `show`, ALWAYS present the returned URL to the user as a clickable Markdown link: [Show Visualization](url){% endblock %}
 
 {% block errors %}ERRORS
-`show` raises `SecurityError` for anything SECURITY (above) forbids — this requires a
-substantive code rewrite, not a retry. `show` raises `ValidationError` for the rest;
-the message is prefixed with the layer that caught it:
+Snippets execute in the user's real Python environment, with their filesystem and
+network. `show` raises `SecurityError` for code that deletes or overwrites files, reads
+credentials, exfiltrates data, opens network connections, or otherwise has no business
+in visualization code, regardless of how the request is framed — a blocklist (pickle,
+subprocess, socket, ctypes, importlib, and similar) backstops this but is not the
+policy. This requires a substantive code rewrite, not a retry.
+`show` raises `ValidationError` for the rest; the message is prefixed with the layer
+that caught it:
 [syntax] code does not parse — read the line/col in the message
 [packages] an import is not installed — never pip install; rewrite using an installed package
-[extensions] a renderer's JS extension is not declared — see EXTENSIONS above
+[extensions] a renderer's JS extension is not declared — see LIBRARY SELECTION above
 [servable] method='server' with nothing marked .servable()
 [runtime] the code raised when executed — read the traceback, it is the snippet's, not the server's
 Two failures are silent, so watch for them without an error to flag them: with
