@@ -66,13 +66,11 @@ def _build_websocket_origins(address: str, port: int) -> list[str]:
 
 def main(address: str = "localhost", port: int = 5077, show: bool = True) -> None:
     """Start the Panel server."""
-    # panel and the pages stay local: ~580 ms and ~930 ms, only `pls serve` needs them.
-    import panel as pn
+    # noqa on both: only `pls serve` renders pages, and hoisting these would make
+    # every other command pay ~580 ms for panel and ~930 ms for the pages module.
+    import panel as pn  # noqa: PLC0415
 
-    from panel_live_server.pages import add_page
-    from panel_live_server.pages import admin_page
-    from panel_live_server.pages import feed_page
-    from panel_live_server.pages import view_page
+    import panel_live_server.pages as pages_module  # noqa: PLC0415
 
     # Initialize the database
     _ = get_db()
@@ -86,10 +84,10 @@ def main(address: str = "localhost", port: int = 5077, show: bool = True) -> Non
 
     # Configure pages
     pages = {
-        "/view": view_page,
-        "/feed": feed_page,
-        "/admin": admin_page,
-        "/add": add_page,
+        "/view": pages_module.view_page,
+        "/feed": pages_module.feed_page,
+        "/admin": pages_module.admin_page,
+        "/add": pages_module.add_page,
     }
 
     # Configure extra patterns for Tornado handlers (REST API endpoints)

@@ -15,14 +15,14 @@ repos:
         exclude: \.min\.js$
       - id: trailing-whitespace
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.0
+    rev: v0.15.5
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: ["check", "--select", "I", "--fix"]
         files: "^src/"
       - id: ruff-format
         types_or: [python, pyi]
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
   - repo: https://github.com/hoxbro/clean_notebook
     rev: v0.1.15

@@ -260,8 +260,10 @@ def find_requirements(code: str) -> list[str]:
         List of required package names
     """
     try:
-        # Import panel's find_requirements function
-        from panel.io.mime_render import find_requirements as panel_find_requirements
+        # noqa: this module must not import panel at module level. On Windows,
+        # cli.py imports it to fix the DLL search path *before* any heavy import,
+        # so panel's native extensions would fail to load if pulled in here.
+        from panel.io.mime_render import find_requirements as panel_find_requirements  # noqa: PLC0415
 
         return panel_find_requirements(code)
     except (ImportError, AttributeError):
@@ -419,8 +421,11 @@ def _isolated_curdoc():
     ``session_context``, which is the condition ``.servable()`` requires before
     it writes anything, so it quietly becomes a no-op here.
     """
-    from bokeh.document import Document
-    from panel.io.state import set_curdoc
+    # noqa on both: same reason as find_requirements above. This module is imported
+    # by cli.py on Windows to fix the DLL search path before any heavy import, so
+    # bokeh and panel must not be pulled in at module level.
+    from bokeh.document import Document  # noqa: PLC0415
+    from panel.io.state import set_curdoc  # noqa: PLC0415
 
     return set_curdoc(Document())
 
