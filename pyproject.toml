@@ -140,6 +140,7 @@ select = [
     "W",    # pycodestyle warnings
     "I",    # isort
     "PIE",
+    "PLC0415",  # import should be at the top-level of a file
     "T20",
     "RUF006",
     "UP004",

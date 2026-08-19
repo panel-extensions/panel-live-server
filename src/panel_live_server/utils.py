@@ -260,8 +260,8 @@ def find_requirements(code: str) -> list[str]:
         List of required package names
     """
     try:
-        # Import panel's find_requirements function
-        from panel.io.mime_render import find_requirements as panel_find_requirements
+        # panel stays local: it's heavy, and most importers of this module never call this.
+        from panel.io.mime_render import find_requirements as panel_find_requirements  # noqa: PLC0415
 
         return panel_find_requirements(code)
     except (ImportError, AttributeError):
@@ -419,8 +419,9 @@ def _isolated_curdoc():
     ``session_context``, which is the condition ``.servable()`` requires before
     it writes anything, so it quietly becomes a no-op here.
     """
-    from bokeh.document import Document
-    from panel.io.state import set_curdoc
+    # bokeh and panel stay local: heavy, and most importers of this module never call this.
+    from bokeh.document import Document  # noqa: PLC0415
+    from panel.io.state import set_curdoc  # noqa: PLC0415
 
     return set_curdoc(Document())
 

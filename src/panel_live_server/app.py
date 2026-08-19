@@ -67,12 +67,12 @@ def _build_websocket_origins(address: str, port: int) -> list[str]:
 def main(address: str = "localhost", port: int = 5077, show: bool = True) -> None:
     """Start the Panel server."""
     # panel and the pages stay local: ~580 ms and ~930 ms, only `pls serve` needs them.
-    import panel as pn
+    import panel as pn  # noqa: PLC0415
 
-    from panel_live_server.pages import add_page
-    from panel_live_server.pages import admin_page
-    from panel_live_server.pages import feed_page
-    from panel_live_server.pages import view_page
+    from panel_live_server.pages import add_page  # noqa: PLC0415
+    from panel_live_server.pages import admin_page  # noqa: PLC0415
+    from panel_live_server.pages import feed_page  # noqa: PLC0415
+    from panel_live_server.pages import view_page  # noqa: PLC0415
 
     # Initialize the database
     _ = get_db()

@@ -118,8 +118,9 @@ def serve(
     else:
         logging.basicConfig(level=logging.INFO)
 
-    from panel_live_server.config import default_panel_port
-    from panel_live_server.config import reset_config
+    # config stays local: ~53 ms, only commands that touch it need to pay for it.
+    from panel_live_server.config import default_panel_port  # noqa: PLC0415
+    from panel_live_server.config import reset_config  # noqa: PLC0415
 
     if port is None:
         port = default_panel_port()
@@ -133,13 +134,14 @@ def serve(
     # Reset the cached config singleton so it re-reads the env vars we just set
     reset_config()
 
-    from panel_live_server.app import main as app_main
+    # app stays local: ~487 ms, only `pls serve` needs it.
+    from panel_live_server.app import main as app_main  # noqa: PLC0415
 
     try:
         app_main(address=host, port=port, show=show)
     except OSError as exc:
         # requests stays local: it costs ~34 ms and only this recovery path needs it.
-        import requests
+        import requests  # noqa: PLC0415
 
         if exc.errno != errno.EADDRINUSE:
             raise
@@ -212,7 +214,7 @@ def mcp(
         os.environ["PANEL_LIVE_SERVER_PROMPTS_FILE"] = prompts
 
     # Kept local: importing server pulls in panel, ~930 ms that every other command would pay.
-    from panel_live_server.server import mcp as mcp_server
+    from panel_live_server.server import mcp as mcp_server  # noqa: PLC0415
 
     # server.py renders at import time, so re-render here (~1 ms) or an earlier import silently wins.
     mcp_server.instructions = render_instructions()
@@ -250,9 +252,10 @@ def status(
 
     Queries the health endpoint and reports the server status.
     """
-    import requests
+    # requests and config stay local: ~34 ms and ~53 ms, only `pls status` needs them.
+    import requests  # noqa: PLC0415
 
-    from panel_live_server.config import default_panel_port
+    from panel_live_server.config import default_panel_port  # noqa: PLC0415
 
     if port is None:
         port = default_panel_port()
@@ -459,7 +462,8 @@ def install_browser() -> None:
     installing (pixi users get it via `pixi run postinstall`). It lands in the
     same environment that runs `pls`.
     """
-    from panel_live_server.screenshot import install_browser as _install_browser
+    # screenshot stays local: ~67 ms, only this command needs it.
+    from panel_live_server.screenshot import install_browser as _install_browser  # noqa: PLC0415
 
     typer.echo("Installing Chromium for the screenshot tool (one-time)...")
     code = _install_browser()

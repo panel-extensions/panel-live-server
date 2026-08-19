@@ -97,7 +97,8 @@ def is_browser_installed() -> bool:
     directly inside a running event loop.
     """
     try:
-        from playwright.sync_api import sync_playwright
+        # playwright is an optional dependency; caught below if not installed.
+        from playwright.sync_api import sync_playwright  # noqa: PLC0415
     except ImportError:
         return False
     try:
@@ -402,7 +403,8 @@ class _BrowserManager:
                 return self._browser
 
             try:
-                from playwright.async_api import async_playwright
+                # playwright is an optional dependency; caught below if not installed.
+                from playwright.async_api import async_playwright  # noqa: PLC0415
             except ImportError as e:
                 raise PlaywrightUnavailableError(_INSTALL_HINT) from e
 
