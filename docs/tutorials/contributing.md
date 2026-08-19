@@ -137,12 +137,59 @@ git checkout -b feature/YourFeature
 
 ## Step 4: Connect to your MCP client
 
-Use the absolute path from `pixi run which pls` (pixi) or `which pls` (uv) above, or
-`where.exe pls` on Windows.
+### Testing your local checkout vs the released PyPI package
+
+`pls install <client>` registers whichever `pls` ran the command, so how you invoke it
+decides which build your client ends up using.
+
+**To test your local changes** (the normal case while contributing), run the command
+through pixi so it always resolves to the editable copy of the checkout you are editing,
+not any other `pls` that might also be on your machine:
+
+```bash
+pixi run pls install claude    # or: cursor / vscode / claude-code
+```
+
+Check it picked the right one:
+
+```bash
+pixi run pls --version
+# 0.1.0a5.post1.dev52+gda3756c94 -- has a dev/git-hash suffix: editable, tracks your checkout
+```
+
+**To test the released PyPI package instead** (comparing behaviour, or confirming a bug
+only shows up in a release, not your branch), install it separately and run its own
+`pls install`:
+
+```bash
+pip install panel-live-server    # or: uv tool install panel-live-server
+pls install claude
+```
+
+```bash
+pls --version
+# 0.1.0a5 -- plain version, no dev/git-hash suffix: this is the frozen PyPI build
+```
+
+!!! warning "Registering one replaces the other"
+    Both point the *same* client at whichever `pls` you last ran `install` with, so
+    running the PyPI one after the pixi one switches Claude Desktop (or Cursor, etc.)
+    over to the released build, and vice versa. To register a specific build without
+    relying on which `pls` happens to run the command, pass it explicitly:
+    `pls install claude --command /path/to/pls`.
+
+Once you've picked the build to register, add it to your client:
 
 === "VS Code"
 
-    Add to `.vscode/mcp.json` (create if it doesn't exist):
+    ```bash
+    pixi run pls install vscode
+    ```
+
+    Run it from the project root: VS Code reads `.vscode/mcp.json` per project, so this
+    writes it relative to your current directory.
+
+    To set it up by hand instead, add to `.vscode/mcp.json` (create if it doesn't exist):
 
     ```json
     {
@@ -162,7 +209,11 @@ Use the absolute path from `pixi run which pls` (pixi) or `which pls` (uv) above
 
 === "Cursor"
 
-    Add to `~/.cursor/mcp.json`:
+    ```bash
+    pixi run pls install cursor
+    ```
+
+    To set it up by hand instead, add to `~/.cursor/mcp.json`:
 
     ```json
     {
@@ -183,7 +234,11 @@ Use the absolute path from `pixi run which pls` (pixi) or `which pls` (uv) above
 
 === "Claude Desktop"
 
-    Edit the config file for your OS:
+    ```bash
+    pixi run pls install claude
+    ```
+
+    To set it up by hand instead, edit the config file for your OS:
 
     - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
     - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
@@ -209,12 +264,21 @@ Use the absolute path from `pixi run which pls` (pixi) or `which pls` (uv) above
 === "Claude Code"
 
     ```bash
+    pixi run pls install claude-code
+    ```
+
+    Or run the underlying command yourself:
+
+    ```bash
     claude mcp add panel-live-server -- /path/to/pls mcp
     ```
 
     !!! warning "Use your absolute path"
         Replace `/path/to/pls` with the path printed above,
         e.g. `claude mcp add panel-live-server -- /path/to/panel-live-server/.venv/bin/pls mcp`
+
+    If the server is already registered, remove it first with
+    `claude mcp remove panel-live-server`.
 
 === "claude.ai"
 

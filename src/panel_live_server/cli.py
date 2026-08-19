@@ -1,10 +1,12 @@
 """CLI for Panel Live Server."""
 
 import errno
+import json
 import logging
 import os
 import sys
 from importlib.metadata import distributions
+from pathlib import Path
 from typing import Annotated
 
 # On Windows, conda/pixi environments require Library/bin and DLLs on PATH so
@@ -19,6 +21,14 @@ if sys.platform == "win32":
 import typer
 
 from panel_live_server import __version__
+from panel_live_server.install import SERVER_NAME
+from panel_live_server.install import InstallError
+from panel_live_server.install import claude_desktop_config_path
+from panel_live_server.install import cursor_config_path
+from panel_live_server.install import merge_mcp_server
+from panel_live_server.install import register_with_claude_code
+from panel_live_server.install import resolve_pls_command
+from panel_live_server.install import vscode_config_path
 from panel_live_server.prompts import render_instructions
 
 logger = logging.getLogger(__name__)
@@ -39,6 +49,9 @@ app = typer.Typer(
 
 list_app = typer.Typer(help="List resources (packages, etc.).")
 app.add_typer(list_app, name="list")
+
+install_app = typer.Typer(help="Register panel-live-server with an AI client's MCP configuration.")
+app.add_typer(install_app, name="install")
 
 
 @app.callback(invoke_without_command=True)
@@ -289,6 +302,152 @@ def list_packages(
     name_width = max(len(name) for name, _ in pkgs)
     for name, version in pkgs:
         typer.echo(f"{name:<{name_width}}  {version}")
+
+
+_COMMAND_OPTION = typer.Option(
+    "",
+    "--command",
+    help="Path to the `pls` executable to register. Defaults to the `pls` running this command.",
+)
+_PROMPTS_OPTION = typer.Option(
+    "",
+    "--prompts",
+    help="Register `pls mcp --prompts <file>`, pointing at prompt-section overrides. Omit to keep whatever the existing entry already passed.",
+)
+_CONFIG_PATH_OPTION = typer.Option(
+    "",
+    "--config-path",
+    help="Write to this config file instead of the client's usual location.",
+)
+
+
+def _register_in_json_config(
+    *,
+    command: str,
+    prompts: str,
+    config_path: str,
+    default_path,
+    servers_key: str,
+    entry_type: str,
+    restart_hint: str,
+) -> None:
+    """Shared body for the clients configured by a JSON file on disk."""
+    try:
+        pls_command = command or resolve_pls_command()
+        path = Path(config_path).expanduser() if config_path else default_path()
+        args = ["mcp", "--prompts", str(Path(prompts).expanduser())] if prompts else ["mcp"]
+        already_installed, entry = merge_mcp_server(
+            path,
+            pls_command,
+            args,
+            servers_key=servers_key,
+            entry_type=entry_type,
+        )
+    except InstallError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    if already_installed:
+        typer.echo(f"{SERVER_NAME} is already registered in {path}")
+    else:
+        typer.echo(f"Registered {SERVER_NAME} in {path}")
+    typer.echo("")
+    typer.echo(json.dumps({servers_key: {SERVER_NAME: entry}}, indent=2))
+    typer.echo("")
+    typer.echo(restart_hint)
+
+
+@install_app.command(name="claude")
+def install_claude(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Claude Desktop.
+
+    Adds (or updates) the `panel-live-server` entry under `mcpServers` in
+    Claude Desktop's config file, without touching any other server already
+    configured there. Flags that an existing entry passed after `mcp` are
+    carried over, so a `--prompts` file set up by hand survives a re-run.
+    Restart Claude Desktop afterwards for the change to take effect.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=claude_desktop_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Restart Claude Desktop for the change to take effect.",
+    )
+
+
+@install_app.command(name="cursor")
+def install_cursor(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Cursor.
+
+    Writes to `~/.cursor/mcp.json`, leaving any other server there untouched.
+    Afterwards open Cursor Settings, MCP, and check for the green dot.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=cursor_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Open Cursor Settings, MCP, and check for the green dot. Use Agent mode in chat.",
+    )
+
+
+@install_app.command(name="vscode")
+def install_vscode(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with VS Code.
+
+    VS Code reads MCP servers per project, so this writes `.vscode/mcp.json`
+    in the directory you run it from, not a file in your home directory.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=vscode_config_path,
+        servers_key="servers",
+        entry_type="stdio",
+        restart_hint="Reload the VS Code window for the change to take effect.",
+    )
+
+
+@install_app.command(name="claude-code")
+def install_claude_code(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+) -> None:
+    """Register panel-live-server with Claude Code.
+
+    Claude Code keeps its own MCP registry rather than a config file to edit,
+    so this runs `claude mcp add` for you. If the server is already registered,
+    remove it first with `claude mcp remove panel-live-server`.
+    """
+    try:
+        pls_command = command or resolve_pls_command()
+        args = ["mcp", "--prompts", str(Path(prompts).expanduser())] if prompts else ["mcp"]
+        ran = register_with_claude_code(pls_command, args)
+    except InstallError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    typer.echo("Registered panel-live-server with Claude Code, via:")
+    typer.echo("")
+    typer.echo(f"  {ran}")
 
 
 @app.command(name="install-browser")
