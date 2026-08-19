@@ -21,6 +21,14 @@ if sys.platform == "win32":
 import typer
 
 from panel_live_server import __version__
+from panel_live_server.install import SERVER_NAME
+from panel_live_server.install import InstallError
+from panel_live_server.install import claude_desktop_config_path
+from panel_live_server.install import cursor_config_path
+from panel_live_server.install import merge_mcp_server
+from panel_live_server.install import register_with_claude_code
+from panel_live_server.install import resolve_pls_command
+from panel_live_server.install import vscode_config_path
 from panel_live_server.prompts import render_instructions
 
 logger = logging.getLogger(__name__)
@@ -324,11 +332,6 @@ def _register_in_json_config(
     restart_hint: str,
 ) -> None:
     """Shared body for the clients configured by a JSON file on disk."""
-    from panel_live_server.install import SERVER_NAME
-    from panel_live_server.install import InstallError
-    from panel_live_server.install import merge_mcp_server
-    from panel_live_server.install import resolve_pls_command
-
     try:
         pls_command = command or resolve_pls_command()
         path = Path(config_path).expanduser() if config_path else default_path()
@@ -368,8 +371,6 @@ def install_claude(
     carried over, so a `--prompts` file set up by hand survives a re-run.
     Restart Claude Desktop afterwards for the change to take effect.
     """
-    from panel_live_server.install import claude_desktop_config_path
-
     _register_in_json_config(
         command=command,
         prompts=prompts,
@@ -392,8 +393,6 @@ def install_cursor(
     Writes to `~/.cursor/mcp.json`, leaving any other server there untouched.
     Afterwards open Cursor Settings, MCP, and check for the green dot.
     """
-    from panel_live_server.install import cursor_config_path
-
     _register_in_json_config(
         command=command,
         prompts=prompts,
@@ -416,8 +415,6 @@ def install_vscode(
     VS Code reads MCP servers per project, so this writes `.vscode/mcp.json`
     in the directory you run it from, not a file in your home directory.
     """
-    from panel_live_server.install import vscode_config_path
-
     _register_in_json_config(
         command=command,
         prompts=prompts,
@@ -440,10 +437,6 @@ def install_claude_code(
     so this runs `claude mcp add` for you. If the server is already registered,
     remove it first with `claude mcp remove panel-live-server`.
     """
-    from panel_live_server.install import InstallError
-    from panel_live_server.install import register_with_claude_code
-    from panel_live_server.install import resolve_pls_command
-
     try:
         pls_command = command or resolve_pls_command()
         args = ["mcp", "--prompts", str(Path(prompts).expanduser())] if prompts else ["mcp"]
