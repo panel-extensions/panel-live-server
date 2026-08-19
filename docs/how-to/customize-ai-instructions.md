@@ -45,7 +45,11 @@ configuration:
 
 === "VS Code"
 
-    In `.vscode/mcp.json`, add to `args`:
+    ```bash
+    pls install vscode --prompts /home/you/my-prompts.json
+    ```
+
+    Or in `.vscode/mcp.json`, add to `args` by hand:
 
     ```json
     {
@@ -61,7 +65,11 @@ configuration:
 
 === "Cursor"
 
-    In `~/.cursor/mcp.json`, add to `args`:
+    ```bash
+    pls install cursor --prompts /home/you/my-prompts.json
+    ```
+
+    Or in `~/.cursor/mcp.json`, add to `args` by hand:
 
     ```json
     {
@@ -76,7 +84,11 @@ configuration:
 
 === "Claude Desktop"
 
-    In the config file for your OS:
+    ```bash
+    pls install claude --prompts /home/you/my-prompts.json
+    ```
+
+    Or set it in the config file for your OS by hand:
 
     - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
     - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
@@ -94,6 +106,12 @@ configuration:
     ```
 
 === "Claude Code"
+
+    ```bash
+    pls install claude-code --prompts /home/you/my-prompts.json
+    ```
+
+    Or run the underlying command yourself:
 
     ```bash
     claude mcp add panel-live-server -- /path/to/pls mcp --prompts /home/you/my-prompts.json

@@ -1,5 +1,6 @@
 """Tests for the Panel Live Server CLI."""
 
+import json
 import os
 import re
 
@@ -50,6 +51,129 @@ def test_mcp_help_documents_the_prompts_flag():
     result = runner.invoke(app, ["mcp", "--help"])
     assert result.exit_code == 0
     assert "--prompts" in _plain(result.output)
+
+
+def test_install_claude_help():
+    """Test that install claude --help works."""
+    result = runner.invoke(app, ["install", "claude", "--help"])
+    assert result.exit_code == 0
+    assert "claude desktop" in result.output.lower()
+
+
+class TestInstallClaude:
+    """`pls install claude` registers panel-live-server in Claude Desktop's config."""
+
+    def test_writes_the_entry(self, tmp_path):
+        config_path = tmp_path / "claude_desktop_config.json"
+        result = runner.invoke(
+            app,
+            ["install", "claude", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["panel-live-server"] == {"command": "/usr/local/bin/pls", "args": ["mcp"]}
+
+    def test_second_run_reports_already_registered(self, tmp_path):
+        config_path = tmp_path / "claude_desktop_config.json"
+        argv = ["install", "claude", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)]
+        runner.invoke(app, argv)
+
+        result = runner.invoke(app, argv)
+
+        assert result.exit_code == 0, result.output
+        assert "already registered" in result.output.lower()
+
+    def test_prints_the_entry_it_wrote(self, tmp_path):
+        """Showing the JSON lets someone set another client up by hand from the same output."""
+        config_path = tmp_path / "claude_desktop_config.json"
+
+        result = runner.invoke(
+            app,
+            ["install", "claude", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert '"mcpServers"' in result.output
+        assert '"panel-live-server"' in result.output
+        assert "/usr/local/bin/pls" in result.output
+
+    def test_prompts_flag_is_registered(self, tmp_path):
+        config_path = tmp_path / "claude_desktop_config.json"
+        prompts_path = tmp_path / "prompts.json"
+
+        result = runner.invoke(
+            app,
+            [
+                "install",
+                "claude",
+                "--command",
+                "/usr/local/bin/pls",
+                "--prompts",
+                str(prompts_path),
+                "--config-path",
+                str(config_path),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        entry = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["panel-live-server"]
+        assert entry["args"] == ["mcp", "--prompts", str(prompts_path)]
+
+    def test_rerun_keeps_a_prompts_file_set_up_by_hand(self, tmp_path):
+        """Re-running must not silently drop flags already in the config."""
+        config_path = tmp_path / "claude_desktop_config.json"
+        existing = {"command": "/old/pls", "args": ["mcp", "--prompts", "/home/u/prompts.json"]}
+        config_path.write_text(json.dumps({"mcpServers": {"panel-live-server": existing}}), encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["install", "claude", "--command", "/new/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        entry = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["panel-live-server"]
+        assert entry == {"command": "/new/pls", "args": ["mcp", "--prompts", "/home/u/prompts.json"]}
+
+    def test_cursor_writes_mcp_servers(self, tmp_path):
+        config_path = tmp_path / "mcp.json"
+
+        result = runner.invoke(
+            app,
+            ["install", "cursor", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["panel-live-server"] == {"command": "/usr/local/bin/pls", "args": ["mcp"]}
+
+    def test_vscode_writes_typed_servers(self, tmp_path):
+        """VS Code uses a different key and needs an explicit stdio type."""
+        config_path = tmp_path / "mcp.json"
+
+        result = runner.invoke(
+            app,
+            ["install", "vscode", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert data["servers"]["panel-live-server"] == {
+            "type": "stdio",
+            "command": "/usr/local/bin/pls",
+            "args": ["mcp"],
+        }
+
+    def test_invalid_existing_json_fails_cleanly(self, tmp_path):
+        config_path = tmp_path / "claude_desktop_config.json"
+        config_path.write_text("{not json", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["install", "claude", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 1
+        assert "not valid JSON" in result.output
 
 
 class TestPromptsFlag:

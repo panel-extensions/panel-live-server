@@ -162,7 +162,16 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
 
 === "VS Code"
 
-    Add to `.vscode/mcp.json` (create if it doesn't exist):
+    From the project you want it in:
+
+    ```bash
+    pls install vscode
+    ```
+
+    VS Code reads MCP servers per project, so this writes `.vscode/mcp.json` in the
+    directory you run it from, filling in the absolute path to `pls` for you.
+
+    To set it up by hand instead, add to `.vscode/mcp.json` (create if it doesn't exist):
 
     ```json
     {
@@ -182,7 +191,11 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
 
 === "Cursor"
 
-    Add to `~/.cursor/mcp.json`:
+    ```bash
+    pls install cursor
+    ```
+
+    To set it up by hand instead, add to `~/.cursor/mcp.json`:
 
     ```json
     {
@@ -203,7 +216,16 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
 
 === "Claude Desktop"
 
-    Edit the config file for your OS:
+    ```bash
+    pls install claude
+    ```
+
+    This writes the entry below into the config file for your OS, filling in the
+    absolute path to the `pls` you just installed. Other servers already configured
+    there are left alone, as are any flags an existing `panel-live-server` entry
+    passed after `mcp` (a `--prompts` file, say), so re-running it is safe.
+
+    To set the config up by hand instead, edit the file for your OS:
 
     - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
     - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
@@ -235,12 +257,22 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
 === "Claude Code"
 
     ```bash
+    pls install claude-code
+    ```
+
+    Claude Code keeps its own MCP registry rather than a config file to edit, so this
+    runs `claude mcp add` for you with the absolute path filled in. To run it yourself:
+
+    ```bash
     claude mcp add panel-live-server -- /path/to/pls mcp
     ```
 
     !!! warning "Use your absolute path"
         Replace `/path/to/pls` with the path printed by `which pls` above,
         e.g. `claude mcp add panel-live-server -- /home/user/.local/bin/pls mcp`
+
+    If the server is already registered, remove it first with
+    `claude mcp remove panel-live-server`.
 
 === "claude.ai"
 
