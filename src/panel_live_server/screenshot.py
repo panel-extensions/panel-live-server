@@ -97,7 +97,9 @@ def is_browser_installed() -> bool:
     directly inside a running event loop.
     """
     try:
-        # playwright is an optional dependency; caught below if not installed.
+        # noqa: not about import cost. server.py, client.py, and endpoints.py all
+        # import this module at module level, so a broken playwright install would
+        # take `pls mcp` down entirely instead of just disabling screenshots.
         from playwright.sync_api import sync_playwright  # noqa: PLC0415
     except ImportError:
         return False
@@ -403,7 +405,9 @@ class _BrowserManager:
                 return self._browser
 
             try:
-                # playwright is an optional dependency; caught below if not installed.
+                # noqa: same reason as is_browser_installed above. Keeping this
+                # nested turns a broken install into PlaywrightUnavailableError
+                # rather than an import-time failure of every module downstream.
                 from playwright.async_api import async_playwright  # noqa: PLC0415
             except ImportError as e:
                 raise PlaywrightUnavailableError(_INSTALL_HINT) from e

@@ -36,6 +36,10 @@ import os
 import sys
 from pathlib import Path
 
+from jinja2 import FileSystemLoader
+from jinja2 import nodes
+from jinja2.sandbox import SandboxedEnvironment
+
 logger = logging.getLogger(__name__)
 
 _BUILTIN_DIR = Path(__file__).parent / "templates" / "prompts"
@@ -123,18 +127,12 @@ def _load_overrides() -> dict[str, tuple[str, str]]:
 
 def _build_environment():
     """Build the Jinja environment that loads the shipped templates."""
-    # jinja2 stays local: ~26 ms, only commands that render instructions need it.
-    from jinja2 import FileSystemLoader  # noqa: PLC0415
-    from jinja2.sandbox import SandboxedEnvironment  # noqa: PLC0415
-
     # Sandboxed because the override text is user-supplied config, not app code.
     return SandboxedEnvironment(loader=FileSystemLoader(str(_BUILTIN_DIR)), keep_trailing_newline=False)
 
 
 def _blocks_in(template: str) -> list[str]:
     """Return the block names declared by one shipped template."""
-    from jinja2 import nodes  # noqa: PLC0415
-
     source = (_BUILTIN_DIR / template).read_text(encoding="utf-8")
     return [node.name for node in _build_environment().parse(source).find_all(nodes.Block)]
 
