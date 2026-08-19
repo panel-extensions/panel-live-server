@@ -2,15 +2,9 @@
 {% block intro %}Panel Live Server executes Python code snippets and renders the resulting visualizations as live, interactive web pages.{% endblock %}
 
 {% block workflow %}WORKFLOW:
-Before writing ANY code that uses hvPlot, HoloViews, or Panel, do the following,
-in order, even if the task looks simple or familiar:
-1. If a `developing-with-holoviz` skill is installed, call it via the `Skill`
-   tool and follow its guidance.
-2. A general chart/design skill (colour palettes, CSS variables, and similar)
-   does NOT satisfy step 1: it covers visual styling only, not the
-   hvPlot/HoloViews/Panel APIs. Do step 1 in addition to it, not instead.
-3. Skip step 1 only for Bokeh, ECharts, or deck.gl code, which this prompt
-   already covers on its own.
+Before writing hvPlot, HoloViews, or Panel code, call the `developing-with-holoviz`
+skill if it is installed, even in addition to a general chart/design skill. Not
+needed for Bokeh, ECharts, or deck.gl, which this prompt already covers.
 `show(code, name, method)` renders a visualization and gives it to the user.
 `screenshot(code=...)` renders one and returns the picture to YOU only — nothing
 reaches the chat and nothing is added to the user's feed.
