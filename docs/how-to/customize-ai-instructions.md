@@ -10,9 +10,9 @@ Every section can be customised:
 | Section | What it covers |
 | --- | --- |
 | `intro` | The one-line description of what the server does |
-| `workflow` | How `show`, `screenshot`, `edit`, and `evaluate` relate, and that validation is automatic |
+| `workflow` | How `show`, `screenshot`, `edit`, and `evaluate` relate, that validation is automatic, and when to defer to the `developing-with-holoviz` skill |
 | `file_policy` | Not writing visualization code out to files |
-| `library_selection` | Which plotting libraries the AI should reach for, and when to defer to the `developing-with-holoviz` skill |
+| `library_selection` | Which plotting libraries the AI should reach for |
 | `rendering` | Panel reactive patterns, and clients that link out instead of embedding |
 | `output` | How the returned URL is presented back to you |
 | `errors` | What `SecurityError` and `ValidationError` mean |
