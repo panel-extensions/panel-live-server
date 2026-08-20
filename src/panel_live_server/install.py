@@ -9,6 +9,8 @@ from pathlib import Path
 
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
+from tomlkit.items import AoT
+from tomlkit.items import Table
 
 SERVER_NAME = "panel-live-server"
 
@@ -44,28 +46,43 @@ def vscode_config_path() -> Path:
 
 
 def windsurf_config_path() -> Path:
-    """Return Windsurf's MCP config file path."""
+    """Return the Windsurf editor's MCP config file path.
+
+    The editor and the Cascade plugin (Windsurf inside another IDE) keep
+    separate files, and only differ by the ``windsurf`` segment. This returns
+    the editor's; plugin users pass ``--config-path ~/.codeium/mcp_config.json``.
+    """
     return Path("~/.codeium/windsurf/mcp_config.json").expanduser()
 
 
 def cline_config_path() -> Path:
-    """Return Cline's MCP config file path for the current OS.
+    """Return Cline's MCP config file path.
 
-    Cline is a VS Code extension, so it stores its config in VS Code's own
-    per-extension global storage rather than a location of its own.
+    Cline 4 moved this out of VS Code's per-extension storage and into a home
+    directory of its own, so one file now serves the VS Code extension, the CLI,
+    and the JetBrains plugin alike. That also means no per-OS branching and no
+    special case for VS Code forks: Insiders, Cursor, and VSCodium all read the
+    same path. The old ``globalStorage/saoudrizwan.claude-dev`` location is now
+    only a migration source, so writing there would have no effect.
     """
-    if sys.platform == "darwin":
-        return Path("~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json").expanduser()
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        if not appdata:
-            raise InstallError("APPDATA is not set, cannot locate Cline's config.")
-        return Path(appdata) / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
-    return Path("~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json").expanduser()
+    if explicit := os.environ.get("CLINE_MCP_SETTINGS_PATH", "").strip():
+        return Path(explicit).expanduser()
+    if data_dir := os.environ.get("CLINE_DATA_DIR", "").strip():
+        base = Path(data_dir).expanduser()
+    elif cline_dir := os.environ.get("CLINE_DIR", "").strip():
+        base = Path(cline_dir).expanduser() / "data"
+    else:
+        base = Path("~/.cline/data").expanduser()
+    return base / "settings" / "cline_mcp_settings.json"
 
 
 def jetbrains_config_path() -> Path:
-    """Return Junie's (JetBrains AI Assistant) global MCP config file path."""
+    """Return Junie's global MCP config file path.
+
+    Junie, not JetBrains AI Assistant: the two are separate products, and only
+    Junie documents a config file. AI Assistant is set up from the IDE settings
+    UI instead, so there is nothing for us to write there.
+    """
     return Path("~/.junie/mcp/mcp.json").expanduser()
 
 
@@ -75,8 +92,21 @@ def gemini_cli_config_path() -> Path:
 
 
 def antigravity_config_path() -> Path:
-    """Return Google Antigravity's global MCP config file path."""
-    return Path("~/.gemini/config/mcp_config.json").expanduser()
+    """Return Google Antigravity's global MCP config file path.
+
+    Antigravity's docs give this as ``~/.gemini/config/mcp_config.json``, but the
+    shipping build reads ``~/.gemini/antigravity/mcp_config.json`` instead: that
+    is the directory it calls its data directory, and the string
+    ``.gemini/config`` appears nowhere in the application bundle. Since the two
+    layouts presumably belong to different versions, an existing file wins over
+    either default, so whichever one the installed build already uses is the one
+    that gets updated.
+    """
+    installed = Path("~/.gemini/antigravity/mcp_config.json").expanduser()
+    documented = Path("~/.gemini/config/mcp_config.json").expanduser()
+    if not installed.exists() and documented.exists():
+        return documented
+    return installed
 
 
 def kiro_config_path() -> Path:
@@ -102,13 +132,17 @@ def kilo_code_config_path() -> Path:
 
 
 def codex_config_path() -> Path:
-    """Return the Codex CLI's global config file path."""
-    return Path("~/.codex/config.toml").expanduser()
+    """Return the Codex CLI's global config file path, honouring ``CODEX_HOME``."""
+    home = os.environ.get("CODEX_HOME", "").strip()
+    base = Path(home).expanduser() if home else Path("~/.codex").expanduser()
+    return base / "config.toml"
 
 
 def mistral_vibe_config_path() -> Path:
-    """Return Mistral Vibe's global config file path."""
-    return Path("~/.vibe/config.toml").expanduser()
+    """Return Mistral Vibe's global config file path, honouring ``VIBE_HOME``."""
+    home = os.environ.get("VIBE_HOME", "").strip()
+    base = Path(home).expanduser() if home else Path("~/.vibe").expanduser()
+    return base / "config.toml"
 
 
 def resolve_pls_command() -> str:
@@ -167,6 +201,11 @@ def merge_mcp_server(
     one, hence the two keyword arguments. ``extra_fields`` covers the rest, e.g.
     GitHub Copilot CLI's ``tools`` list.
 
+    Fields on an existing entry that this does not manage are carried over rather
+    than rebuilt away. Several clients write their own alongside ours (Kiro adds
+    ``disabled`` and ``autoApprove``, others add ``env`` or ``timeout``), and
+    re-running an install should not silently reset a server the user had tuned.
+
     Returns whether the file already held this exact entry (nothing changed), and
     the entry itself, so callers can show what a hand-written config would need.
     """
@@ -179,13 +218,17 @@ def merge_mcp_server(
         data = {}
 
     servers = data.setdefault(servers_key, {})
-    entry: dict = {"type": entry_type} if entry_type else {}
+    existing = servers.get(SERVER_NAME)
+    entry: dict = dict(existing) if isinstance(existing, dict) else {}
+    if entry_type:
+        entry["type"] = entry_type
     entry["command"] = command
-    entry["args"] = _merge_args(servers.get(SERVER_NAME), args)
-    if extra_fields:
-        entry.update(extra_fields)
+    entry["args"] = _merge_args(existing, args)
+    # setdefault, not update: a `tools` list the user narrowed by hand is theirs.
+    for key, value in (extra_fields or {}).items():
+        entry.setdefault(key, value)
 
-    if servers.get(SERVER_NAME) == entry:
+    if existing == entry:
         return True, entry
 
     servers[SERVER_NAME] = entry
@@ -219,9 +262,14 @@ def merge_kilo_code_server(config_path: Path, command: str, args: list[str]) -> 
     if len(args) <= 1 and isinstance(old_command, list) and len(old_command) > 2:
         full_args = args + [a for a in old_command[2:] if isinstance(a, str)]
 
-    entry = {"type": "local", "command": [command, *full_args], "enabled": True}
+    # Same as merge_mcp_server: keep fields we do not manage, e.g. `environment`
+    # or a `timeout` the user raised for a slow start-up.
+    entry: dict = dict(existing) if isinstance(existing, dict) else {}
+    entry["type"] = "local"
+    entry["command"] = [command, *full_args]
+    entry.setdefault("enabled", True)
 
-    if servers.get(SERVER_NAME) == entry:
+    if existing == entry:
         return True, entry
 
     servers[SERVER_NAME] = entry
@@ -248,6 +296,15 @@ def merge_codex_server(config_path: Path, command: str, args: list[str]) -> tupl
         doc = tomlkit.document()
 
     servers = doc.setdefault("mcp_servers", tomlkit.table(is_super_table=True))
+    # A config can legally hold `mcp_servers = []` or `mcp_servers = {}` instead
+    # of the `[mcp_servers.<name>]` tables Codex documents. Writing a sub-table
+    # into either produces TOML that no longer parses, so refuse rather than
+    # hand back a config the client can no longer read.
+    if not isinstance(servers, Table):
+        raise InstallError(
+            f"{config_path} has an `mcp_servers` entry that is not a table. Remove that line (or convert it to `[mcp_servers.<name>]` tables), then re-run this."
+        )
+
     entry = tomlkit.table()
     entry["command"] = command
     entry["args"] = _merge_args(servers.get(SERVER_NAME), args)
@@ -259,6 +316,41 @@ def merge_codex_server(config_path: Path, command: str, args: list[str]) -> tupl
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
     return False, dict(entry)
+
+
+def _vibe_servers_aot(doc, config_path: Path) -> AoT:
+    """Return Vibe's ``mcp_servers`` as an array of tables, converting if needed.
+
+    ``mcp_servers = []`` is the same key in a different TOML shape, and a config
+    can hold it either because a tool wrote it or because someone cleared the
+    list by hand. Appending a table to that array writes a file that no longer
+    parses, so the array form is rewritten as a real ``[[mcp_servers]]`` first.
+    Entries already written inline are carried across rather than dropped.
+    """
+    servers = doc.get("mcp_servers")
+    if isinstance(servers, AoT):
+        return servers
+    if servers is None:
+        return doc.setdefault("mcp_servers", tomlkit.aot())
+
+    try:
+        existing = list(servers)
+    except TypeError:
+        existing = None
+    if existing is None or any(not isinstance(s, dict) for s in existing):
+        raise InstallError(
+            f"{config_path} has an `mcp_servers` entry that is not a list of servers. "
+            f"Remove that line (or convert it to `[[mcp_servers]]` entries), then re-run this."
+        )
+
+    converted = tomlkit.aot()
+    for server in existing:
+        table = tomlkit.table()
+        for key, value in server.items():
+            table[key] = value
+        converted.append(table)
+    doc["mcp_servers"] = converted
+    return doc["mcp_servers"]
 
 
 def merge_mistral_vibe_server(config_path: Path, command: str, args: list[str]) -> tuple[bool, dict]:
@@ -276,7 +368,7 @@ def merge_mistral_vibe_server(config_path: Path, command: str, args: list[str]) 
     else:
         doc = tomlkit.document()
 
-    servers = doc.setdefault("mcp_servers", tomlkit.aot())
+    servers = _vibe_servers_aot(doc, config_path)
     existing = next((s for s in servers if s.get("name") == SERVER_NAME), None)
 
     entry = tomlkit.table()

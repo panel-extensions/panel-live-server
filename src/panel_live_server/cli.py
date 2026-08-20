@@ -466,10 +466,11 @@ def install_windsurf(
     prompts: str = _PROMPTS_OPTION,
     config_path: str = _CONFIG_PATH_OPTION,
 ) -> None:
-    """Register panel-live-server with Windsurf.
+    """Register panel-live-server with the Windsurf editor.
 
     Writes to `~/.codeium/windsurf/mcp_config.json`, leaving any other server
-    there untouched.
+    there untouched. To configure the Cascade plugin inside another IDE instead,
+    point this at its own file: `--config-path ~/.codeium/mcp_config.json`.
     """
     _register_in_json_config(
         command=command,
@@ -490,9 +491,9 @@ def install_cline(
 ) -> None:
     """Register panel-live-server with Cline.
 
-    Cline stores MCP servers in VS Code's per-extension global storage rather
-    than `.vscode/mcp.json`, so this is a separate config file from the `vscode`
-    command even when both run in the same editor.
+    Writes to `~/.cline/data/settings/cline_mcp_settings.json`, which Cline reads
+    from whichever editor it runs in. This is a separate file from the one the
+    `vscode` command writes, so running one does not configure the other.
     """
     _register_in_json_config(
         command=command,
@@ -511,11 +512,12 @@ def install_jetbrains(
     prompts: str = _PROMPTS_OPTION,
     config_path: str = _CONFIG_PATH_OPTION,
 ) -> None:
-    """Register panel-live-server with Junie (JetBrains AI Assistant).
+    """Register panel-live-server with Junie.
 
     Writes to `~/.junie/mcp/mcp.json`, which applies to every project opened in
-    the IDE. Add an `.junie/mcp/mcp.json` in a specific project instead if you
-    only want it there.
+    the IDE. Add a `.junie/mcp/mcp.json` in a specific project instead if you
+    only want it there. JetBrains AI Assistant is a separate product configured
+    from Settings, Tools, AI Assistant, Model Context Protocol, not from a file.
     """
     _register_in_json_config(
         command=command,
@@ -558,9 +560,10 @@ def install_antigravity(
 ) -> None:
     """Register panel-live-server with Google Antigravity.
 
-    Writes to `~/.gemini/config/mcp_config.json`, Antigravity's global MCP
-    config. Add an `.agents/mcp_config.json` in a specific project instead if
-    you only want it there.
+    Writes to `~/.gemini/antigravity/mcp_config.json`, which is what the shipping
+    build reads, falling back to the `~/.gemini/config/mcp_config.json` the docs
+    describe when that is the file already present. Add an
+    `.agents/mcp_config.json` in a project instead if you only want it there.
     """
     _register_in_json_config(
         command=command,

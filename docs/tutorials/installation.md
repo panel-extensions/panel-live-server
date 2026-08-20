@@ -280,7 +280,15 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
     pls install windsurf
     ```
 
-    To set it up by hand instead, add to `~/.codeium/windsurf/mcp_config.json`:
+    That covers the Windsurf editor. If you run Cascade as a plugin inside another
+    IDE, it reads a different file, so point the command at it:
+
+    ```bash
+    pls install windsurf --config-path ~/.codeium/mcp_config.json
+    ```
+
+    To set it up by hand instead, add to `~/.codeium/windsurf/mcp_config.json`
+    (editor) or `~/.codeium/mcp_config.json` (plugin):
 
     ```json
     {
@@ -305,9 +313,12 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
     pls install cline
     ```
 
-    Cline stores this separately from `.vscode/mcp.json`, in VS Code's own
-    per-extension storage. To set it up by hand instead, add to
-    `cline_mcp_settings.json` (open it from Cline's "Edit MCP Settings" button):
+    Cline stores this separately from `.vscode/mcp.json`, so running `pls install
+    vscode` does not configure Cline. One file serves every editor Cline runs in,
+    VS Code, Insiders, Cursor, and VSCodium alike.
+
+    To set it up by hand instead, add to
+    `~/.cline/data/settings/cline_mcp_settings.json`:
 
     ```json
     {
@@ -332,7 +343,11 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
     pls install jetbrains
     ```
 
-    To set it up by hand instead, add to `~/.junie/mcp/mcp.json`:
+    This sets up **Junie**. JetBrains AI Assistant is a separate product with no
+    config file to write: add the server there from Settings → Tools → AI Assistant
+    → Model Context Protocol, using the same `command` and `args` shown below.
+
+    To set Junie up by hand instead, add to `~/.junie/mcp/mcp.json`:
 
     ```json
     {
@@ -383,7 +398,7 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
     pls install antigravity
     ```
 
-    To set it up by hand instead, add to `~/.gemini/config/mcp_config.json`:
+    To set it up by hand instead, add to `~/.gemini/antigravity/mcp_config.json`:
 
     ```json
     {
@@ -399,6 +414,12 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
     !!! warning "Use your absolute path"
         Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
         e.g. `"command": "/home/user/.local/bin/pls"`
+
+    !!! note "Two possible locations"
+        Antigravity's own docs give this path as `~/.gemini/config/mcp_config.json`,
+        but the shipping build reads `~/.gemini/antigravity/mcp_config.json`. The
+        command writes whichever one your install already uses, so prefer it over
+        editing by hand if you are unsure.
 
     Open Manage MCP Servers in Antigravity and confirm it's connected.
 
