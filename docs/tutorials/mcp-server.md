@@ -15,7 +15,7 @@ asked an AI to produce a chart and seen it rendered live in your IDE.
 ## Step 1: Add Panel Live Server to your MCP configuration
 
 See [Installation → Connect to your MCP client](installation.md#connect-to-your-mcp-client) for
-the full setup instructions for VS Code, Cursor, Claude Desktop, Claude Code, and claude.ai.
+the full setup instructions for VS Code, Cursor, Claude Desktop, Claude Code, claude.ai, and more.
 
 !!! note
     When the MCP server starts, it automatically starts the Panel server in the background.

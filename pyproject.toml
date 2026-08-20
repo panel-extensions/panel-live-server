@@ -44,6 +44,7 @@ dependencies = [
     "typer",
     "ruff",
     "playwright",
+    "tomlkit",
 ]
 
 [project.scripts]

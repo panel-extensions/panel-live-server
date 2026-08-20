@@ -274,6 +274,260 @@ directory is on your PATH, run `uv tool update-shell` and restart your terminal.
     If the server is already registered, remove it first with
     `claude mcp remove panel-live-server`.
 
+=== "Windsurf"
+
+    ```bash
+    pls install windsurf
+    ```
+
+    To set it up by hand instead, add to `~/.codeium/windsurf/mcp_config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp"]
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
+        e.g. `"command": "/home/user/.local/bin/pls"`
+
+    Open the MCP servers panel (hammer icon) in Cascade and confirm it's running.
+
+=== "Cline"
+
+    ```bash
+    pls install cline
+    ```
+
+    Cline stores this separately from `.vscode/mcp.json`, in VS Code's own
+    per-extension storage. To set it up by hand instead, add to
+    `cline_mcp_settings.json` (open it from Cline's "Edit MCP Settings" button):
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp"]
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
+        e.g. `"command": "/home/user/.local/bin/pls"`
+
+    Open Cline's MCP Servers panel and confirm panel-live-server is connected.
+
+=== "JetBrains / Junie"
+
+    ```bash
+    pls install jetbrains
+    ```
+
+    To set it up by hand instead, add to `~/.junie/mcp/mcp.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp"]
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
+        e.g. `"command": "/home/user/.local/bin/pls"`
+
+    Restart the IDE, or reopen Junie's MCP settings, for the change to take effect.
+
+=== "Gemini CLI"
+
+    ```bash
+    pls install gemini-cli
+    ```
+
+    This writes into `~/.gemini/settings.json`, leaving every other setting there
+    (theme, auth, other servers) untouched. To set it up by hand instead, add:
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp"]
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
+        e.g. `"command": "/home/user/.local/bin/pls"`
+
+    Restart the Gemini CLI for the change to take effect.
+
+=== "Antigravity"
+
+    ```bash
+    pls install antigravity
+    ```
+
+    To set it up by hand instead, add to `~/.gemini/config/mcp_config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp"]
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
+        e.g. `"command": "/home/user/.local/bin/pls"`
+
+    Open Manage MCP Servers in Antigravity and confirm it's connected.
+
+=== "Kiro"
+
+    ```bash
+    pls install kiro
+    ```
+
+    To set it up by hand instead, add to `~/.kiro/settings/mcp.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "command": "/path/to/pls",
+          "args": ["mcp"]
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
+        e.g. `"command": "/home/user/.local/bin/pls"`
+
+    Reload Kiro, or open the MCP panel, for the change to take effect.
+
+=== "Copilot CLI"
+
+    ```bash
+    pls install copilot
+    ```
+
+    This is the standalone `copilot` CLI, not VS Code's Copilot Chat (which already
+    reads `.vscode/mcp.json`, see the VS Code tab). To set it up by hand instead, add
+    to `~/.copilot/mcp-config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "panel-live-server": {
+          "type": "local",
+          "command": "/path/to/pls",
+          "args": ["mcp"],
+          "tools": ["*"]
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `"command": "/path/to/pls"` with the path printed by `which pls` above,
+        e.g. `"command": "/home/user/.local/bin/pls"`
+
+    Run `/mcp show` in the Copilot CLI to confirm panel-live-server is connected.
+
+=== "Kilo Code"
+
+    ```bash
+    pls install kilo-code
+    ```
+
+    Kilo Code packs the command and its arguments into one array under a `mcp` key,
+    rather than separate `command`/`args` fields under `mcpServers`. To set it up by
+    hand instead, add to `~/.config/kilo/kilo.jsonc`:
+
+    ```json
+    {
+      "mcp": {
+        "panel-live-server": {
+          "type": "local",
+          "command": ["/path/to/pls", "mcp"],
+          "enabled": true
+        }
+      }
+    }
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `/path/to/pls` with the path printed by `which pls` above,
+        e.g. `"command": ["/home/user/.local/bin/pls", "mcp"]`
+
+    Reload the window for the change to take effect.
+
+=== "Codex CLI"
+
+    ```bash
+    pls install codex
+    ```
+
+    Codex uses TOML, not JSON. To set it up by hand instead, add to `~/.codex/config.toml`:
+
+    ```toml
+    [mcp_servers.panel-live-server]
+    command = "/path/to/pls"
+    args = ["mcp"]
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `/path/to/pls` with the path printed by `which pls` above,
+        e.g. `command = "/home/user/.local/bin/pls"`
+
+    Restart the Codex CLI for the change to take effect.
+
+=== "Mistral Vibe"
+
+    ```bash
+    pls install mistral-vibe
+    ```
+
+    Vibe also uses TOML, and lists servers as an array of tables identified by a
+    `name` field rather than keyed by their own table name. To set it up by hand
+    instead, add to `~/.vibe/config.toml`:
+
+    ```toml
+    [[mcp_servers]]
+    name = "panel-live-server"
+    transport = "stdio"
+    command = "/path/to/pls"
+    args = ["mcp"]
+    ```
+
+    !!! warning "Use your absolute path"
+        Replace `/path/to/pls` with the path printed by `which pls` above,
+        e.g. `command = "/home/user/.local/bin/pls"`
+
+    Restart Vibe for the change to take effect.
+
 === "claude.ai"
 
     claude.ai requires HTTP transport and a public URL. You can use any tunneling service

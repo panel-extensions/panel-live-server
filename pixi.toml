@@ -26,6 +26,7 @@ setuptools-scm = "*"
 fastmcp = ">=3.0"
 panel-material-ui = "*"
 playwright = "*"
+tomlkit = "*"
 
 [feature.test.dependencies]
 pytest = ">=6"
