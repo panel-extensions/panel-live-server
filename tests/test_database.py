@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from panel_live_server.database import Snippet
-from panel_live_server.database import SnippetDatabase
+from panel_live_server.database import Snippet, SnippetDatabase
 from panel_live_server.utils import ExtensionError
 
 

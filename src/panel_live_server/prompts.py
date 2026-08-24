@@ -36,8 +36,7 @@ import os
 import sys
 from pathlib import Path
 
-from jinja2 import FileSystemLoader
-from jinja2 import nodes
+from jinja2 import FileSystemLoader, nodes
 from jinja2.sandbox import SandboxedEnvironment
 
 logger = logging.getLogger(__name__)

@@ -7,8 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import panel_live_server.manager as manager_module
-from panel_live_server.manager import PanelServerManager
-from panel_live_server.manager import _force_kill_pid
+from panel_live_server.manager import PanelServerManager, _force_kill_pid
 
 # ---------------------------------------------------------------------------
 # Shared fake-psutil helpers

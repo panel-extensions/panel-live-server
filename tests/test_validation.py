@@ -2,11 +2,7 @@
 
 import pytest
 
-from panel_live_server.validation import SecurityError
-from panel_live_server.validation import ast_check
-from panel_live_server.validation import check_packages
-from panel_live_server.validation import ruff_check
-from panel_live_server.validation import ruff_format
+from panel_live_server.validation import SecurityError, ast_check, check_packages, ruff_check, ruff_format
 
 # ---------------------------------------------------------------------------
 # Layer 1: ast_check

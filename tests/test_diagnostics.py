@@ -3,8 +3,7 @@
 import sys
 
 from panel_live_server import diagnostics
-from panel_live_server.config import get_config
-from panel_live_server.config import reset_config
+from panel_live_server.config import get_config, reset_config
 
 
 class TestRecordAndPop:

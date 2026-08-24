@@ -11,12 +11,10 @@ from typer.testing import CliRunner
 import panel_live_server.server as server_module
 from panel_live_server.cli import app
 from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
-from panel_live_server.config import get_config
-from panel_live_server.config import reset_config
+from panel_live_server.config import get_config, reset_config
 from panel_live_server.screenshot import Capture
 from panel_live_server.server import mcp
-from panel_live_server.validation import SecurityError
-from panel_live_server.validation import ValidationError
+from panel_live_server.validation import SecurityError, ValidationError
 
 
 @pytest.mark.asyncio

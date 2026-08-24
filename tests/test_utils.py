@@ -12,15 +12,17 @@ from bokeh.io.doc import patch_curdoc
 from panel.io.state import state
 
 import panel_live_server.utils as utils_module
-from panel_live_server.utils import ExtensionError
-from panel_live_server.utils import _run_execution
-from panel_live_server.utils import execute_in_module
-from panel_live_server.utils import extract_last_expression
-from panel_live_server.utils import find_extensions
-from panel_live_server.utils import find_requirements
-from panel_live_server.utils import prepend_env_dll_paths
-from panel_live_server.utils import validate_code
-from panel_live_server.utils import validate_extension_availability
+from panel_live_server.utils import (
+    ExtensionError,
+    _run_execution,
+    execute_in_module,
+    extract_last_expression,
+    find_extensions,
+    find_requirements,
+    prepend_env_dll_paths,
+    validate_code,
+    validate_extension_availability,
+)
 
 
 class TestPrependEnvDllPaths:

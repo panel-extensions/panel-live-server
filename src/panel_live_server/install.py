@@ -9,8 +9,7 @@ from pathlib import Path
 
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
-from tomlkit.items import AoT
-from tomlkit.items import Table
+from tomlkit.items import AoT, Table
 
 SERVER_NAME = "panel-live-server"
 
