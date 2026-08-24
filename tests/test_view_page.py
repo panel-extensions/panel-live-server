@@ -2,15 +2,12 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from panel_live_server.database import Snippet
-from panel_live_server.database import SnippetDatabase
-from panel_live_server.pages.view_page import _execute_code
-from panel_live_server.pages.view_page import create_view
+from panel_live_server.database import Snippet, SnippetDatabase
+from panel_live_server.pages.view_page import _execute_code, create_view
 
 
 def _make_snippet(app: str, method: str = "inline") -> Snippet:

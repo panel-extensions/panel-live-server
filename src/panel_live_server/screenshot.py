@@ -43,8 +43,7 @@ import math
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 
 from panel_live_server.config import get_config
 

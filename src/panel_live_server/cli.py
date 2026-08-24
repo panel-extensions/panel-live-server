@@ -22,8 +22,7 @@ import requests
 import typer
 
 from panel_live_server import __version__
-from panel_live_server.config import default_panel_port
-from panel_live_server.config import reset_config
+from panel_live_server.config import default_panel_port, reset_config
 from panel_live_server.install import (
     SERVER_NAME,
     InstallError,

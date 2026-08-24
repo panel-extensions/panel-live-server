@@ -7,14 +7,9 @@ and displays the results through various endpoints.
 import logging
 from urllib.parse import urlparse
 
-from panel_live_server.config import get_config
-from panel_live_server.config import reset_config
+from panel_live_server.config import get_config, reset_config
 from panel_live_server.database import get_db
-from panel_live_server.endpoints import EvaluateEndpoint
-from panel_live_server.endpoints import HealthEndpoint
-from panel_live_server.endpoints import ScreenshotEndpoint
-from panel_live_server.endpoints import SnippetEditEndpoint
-from panel_live_server.endpoints import SnippetEndpoint
+from panel_live_server.endpoints import EvaluateEndpoint, HealthEndpoint, ScreenshotEndpoint, SnippetEditEndpoint, SnippetEndpoint
 
 logger = logging.getLogger(__name__)
 

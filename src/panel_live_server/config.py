@@ -6,8 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("panel_live_server")
 

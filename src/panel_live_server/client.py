@@ -11,8 +11,7 @@ import logging
 
 import requests  # type: ignore[import-untyped]
 
-from panel_live_server import diagnostics
-from panel_live_server import screenshot
+from panel_live_server import diagnostics, screenshot
 
 logger = logging.getLogger(__name__)
 

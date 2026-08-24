@@ -5,10 +5,7 @@ import json
 import pytest
 
 from panel_live_server import prompts
-from panel_live_server.prompts import SCREENSHOT
-from panel_live_server.prompts import known_sections
-from panel_live_server.prompts import render_instructions
-from panel_live_server.prompts import render_prompt
+from panel_live_server.prompts import SCREENSHOT, known_sections, render_instructions, render_prompt
 
 _PROMPTS_FILE_ENV = "PANEL_LIVE_SERVER_PROMPTS_FILE"
 

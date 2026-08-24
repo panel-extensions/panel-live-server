@@ -13,10 +13,7 @@ import panel_live_server.endpoints as endpoints_module
 import panel_live_server.screenshot as screenshot_module
 from panel_live_server import usage
 from panel_live_server.database import SnippetDatabase
-from panel_live_server.endpoints import HealthEndpoint
-from panel_live_server.endpoints import ScreenshotEndpoint
-from panel_live_server.endpoints import SnippetEditEndpoint
-from panel_live_server.endpoints import SnippetEndpoint
+from panel_live_server.endpoints import HealthEndpoint, ScreenshotEndpoint, SnippetEditEndpoint, SnippetEndpoint
 from panel_live_server.validation import SecurityError
 
 

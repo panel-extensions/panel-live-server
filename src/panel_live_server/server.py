@@ -13,36 +13,24 @@ import signal
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
-from fastmcp import Context
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.server.apps import AppConfig
-from fastmcp.server.apps import ResourceCSP
+from fastmcp.server.apps import AppConfig, ResourceCSP
 from fastmcp.tools.tool import ToolResult
 from fastmcp.utilities.types import Image
 from mcp.types import TextContent
 
 from panel_live_server import diagnostics
-from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX
-from panel_live_server.client import DisplayClient
+from panel_live_server.client import BROWSER_UNAVAILABLE_PREFIX, DisplayClient
 from panel_live_server.config import get_config
 from panel_live_server.manager import PanelServerManager
-from panel_live_server.prompts import SCREENSHOT
-from panel_live_server.prompts import render_instructions
-from panel_live_server.prompts import render_prompt
-from panel_live_server.screenshot import Capture
-from panel_live_server.screenshot import is_browser_installed
-from panel_live_server.utils import ExtensionError
-from panel_live_server.utils import validate_extension_availability
-from panel_live_server.validation import SecurityError
-from panel_live_server.validation import ValidationError
-from panel_live_server.validation import ast_check
-from panel_live_server.validation import check_packages
-from panel_live_server.validation import ruff_check
+from panel_live_server.prompts import SCREENSHOT, render_instructions, render_prompt
+from panel_live_server.screenshot import Capture, is_browser_installed
+from panel_live_server.utils import ExtensionError, validate_extension_availability
+from panel_live_server.validation import SecurityError, ValidationError, ast_check, check_packages, ruff_check
 
 logger = logging.getLogger(__name__)
 

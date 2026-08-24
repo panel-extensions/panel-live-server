@@ -5,12 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from panel_live_server.config import _PORT_BASE
-from panel_live_server.config import _PORT_SPAN
-from panel_live_server.config import _resolve_external_url
-from panel_live_server.config import default_panel_port
-from panel_live_server.config import get_config
-from panel_live_server.config import reset_config
+from panel_live_server.config import _PORT_BASE, _PORT_SPAN, _resolve_external_url, default_panel_port, get_config, reset_config
 
 # Env vars that must be absent by default to keep tests isolated
 _CLEAR_VARS = {

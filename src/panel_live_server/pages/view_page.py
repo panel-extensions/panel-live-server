@@ -9,19 +9,15 @@ import io
 import logging
 import sys
 import traceback
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 
 import panel as pn
 from bokeh.events import DocumentReady
 from bokeh.models import CustomJS
 
 from panel_live_server import diagnostics
-from panel_live_server.database import Snippet
-from panel_live_server.database import get_db
-from panel_live_server.utils import execute_in_module
-from panel_live_server.utils import extract_last_expression
-from panel_live_server.utils import find_extensions
+from panel_live_server.database import Snippet, get_db
+from panel_live_server.utils import execute_in_module, extract_last_expression, find_extensions
 
 logger = logging.getLogger(__name__)
 

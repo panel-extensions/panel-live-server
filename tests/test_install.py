@@ -8,26 +8,28 @@ from pathlib import Path
 
 import pytest
 
-from panel_live_server.install import InstallError
-from panel_live_server.install import antigravity_config_path
-from panel_live_server.install import claude_desktop_config_path
-from panel_live_server.install import cline_config_path
-from panel_live_server.install import codex_config_path
-from panel_live_server.install import copilot_config_path
-from panel_live_server.install import cursor_config_path
-from panel_live_server.install import gemini_cli_config_path
-from panel_live_server.install import jetbrains_config_path
-from panel_live_server.install import kilo_code_config_path
-from panel_live_server.install import kiro_config_path
-from panel_live_server.install import merge_codex_server
-from panel_live_server.install import merge_kilo_code_server
-from panel_live_server.install import merge_mcp_server
-from panel_live_server.install import merge_mistral_vibe_server
-from panel_live_server.install import mistral_vibe_config_path
-from panel_live_server.install import register_with_claude_code
-from panel_live_server.install import resolve_pls_command
-from panel_live_server.install import vscode_config_path
-from panel_live_server.install import windsurf_config_path
+from panel_live_server.install import (
+    InstallError,
+    antigravity_config_path,
+    claude_desktop_config_path,
+    cline_config_path,
+    codex_config_path,
+    copilot_config_path,
+    cursor_config_path,
+    gemini_cli_config_path,
+    jetbrains_config_path,
+    kilo_code_config_path,
+    kiro_config_path,
+    merge_codex_server,
+    merge_kilo_code_server,
+    merge_mcp_server,
+    merge_mistral_vibe_server,
+    mistral_vibe_config_path,
+    register_with_claude_code,
+    resolve_pls_command,
+    vscode_config_path,
+    windsurf_config_path,
+)
 
 
 class TestMergeMcpServer:

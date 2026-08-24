@@ -27,8 +27,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from threading import Lock
 
 logger = logging.getLogger(__name__)

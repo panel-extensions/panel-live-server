@@ -11,14 +11,7 @@ lives in ``tests/ui/test_screenshot_ui``.
 
 import pytest
 
-from panel_live_server.screenshot import _MAX_META_BYTES
-from panel_live_server.screenshot import ActionError
-from panel_live_server.screenshot import Capture
-from panel_live_server.screenshot import apply_meta
-from panel_live_server.screenshot import check_actions
-from panel_live_server.screenshot import decode_meta
-from panel_live_server.screenshot import encode_meta
-from panel_live_server.screenshot import tile_label
+from panel_live_server.screenshot import _MAX_META_BYTES, ActionError, Capture, apply_meta, check_actions, decode_meta, encode_meta, tile_label
 
 CONTROLS = ["Overview", "Sales", "Costs"]
 
