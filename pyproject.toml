@@ -163,6 +163,8 @@ convention = "numpy"
 "tests/**" = ["D"]
 # Ignore all files that end in `_test.py`.
 "*_test.py" = ["D"]
+# Allow grouped imports here: cli.py pulls 20+ names from panel_live_server.install alone.
+"src/panel_live_server/cli.py" = ["I001"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
