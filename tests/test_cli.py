@@ -4,6 +4,7 @@ import json
 import os
 import re
 
+import pytest
 from typer.testing import CliRunner
 
 import panel_live_server.server as server_module
@@ -174,6 +175,87 @@ class TestInstallClaude:
 
         assert result.exit_code == 1
         assert "not valid JSON" in result.output
+
+    @pytest.mark.parametrize("client", ["windsurf", "cline", "jetbrains", "gemini-cli", "antigravity", "kiro"])
+    def test_plain_mcp_servers_clients_write_the_entry(self, tmp_path, client):
+        """These all share the plain `mcpServers` shape Claude Desktop/Cursor use."""
+        config_path = tmp_path / "mcp.json"
+
+        result = runner.invoke(
+            app,
+            ["install", client, "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["panel-live-server"] == {"command": "/usr/local/bin/pls", "args": ["mcp"]}
+
+    def test_copilot_writes_a_typed_entry_with_tools(self, tmp_path):
+        config_path = tmp_path / "mcp-config.json"
+
+        result = runner.invoke(
+            app,
+            ["install", "copilot", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["panel-live-server"] == {
+            "type": "local",
+            "command": "/usr/local/bin/pls",
+            "args": ["mcp"],
+            "tools": ["*"],
+        }
+
+    def test_kilo_code_writes_a_combined_command_array(self, tmp_path):
+        config_path = tmp_path / "kilo.jsonc"
+
+        result = runner.invoke(
+            app,
+            ["install", "kilo-code", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert data["mcp"]["panel-live-server"] == {
+            "type": "local",
+            "command": ["/usr/local/bin/pls", "mcp"],
+            "enabled": True,
+        }
+
+    def test_codex_writes_a_toml_table(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+
+        result = runner.invoke(
+            app,
+            ["install", "codex", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        text = config_path.read_text(encoding="utf-8")
+        assert "[mcp_servers.panel-live-server]" in text
+        assert 'command = "/usr/local/bin/pls"' in text
+
+    def test_mistral_vibe_writes_an_array_of_tables_entry(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+
+        result = runner.invoke(
+            app,
+            ["install", "mistral-vibe", "--command", "/usr/local/bin/pls", "--config-path", str(config_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        text = config_path.read_text(encoding="utf-8")
+        assert "[[mcp_servers]]" in text
+        assert 'name = "panel-live-server"' in text
+
+    @pytest.mark.parametrize(
+        "client",
+        ["windsurf", "cline", "jetbrains", "gemini-cli", "antigravity", "kiro", "copilot", "kilo-code", "codex", "mistral-vibe"],
+    )
+    def test_help_works(self, client):
+        result = runner.invoke(app, ["install", client, "--help"])
+        assert result.exit_code == 0, result.output
 
 
 class TestPromptsFlag:

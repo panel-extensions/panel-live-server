@@ -3,17 +3,31 @@
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from panel_live_server.install import InstallError
+from panel_live_server.install import antigravity_config_path
 from panel_live_server.install import claude_desktop_config_path
+from panel_live_server.install import cline_config_path
+from panel_live_server.install import codex_config_path
+from panel_live_server.install import copilot_config_path
 from panel_live_server.install import cursor_config_path
+from panel_live_server.install import gemini_cli_config_path
+from panel_live_server.install import jetbrains_config_path
+from panel_live_server.install import kilo_code_config_path
+from panel_live_server.install import kiro_config_path
+from panel_live_server.install import merge_codex_server
+from panel_live_server.install import merge_kilo_code_server
 from panel_live_server.install import merge_mcp_server
+from panel_live_server.install import merge_mistral_vibe_server
+from panel_live_server.install import mistral_vibe_config_path
 from panel_live_server.install import register_with_claude_code
 from panel_live_server.install import resolve_pls_command
 from panel_live_server.install import vscode_config_path
+from panel_live_server.install import windsurf_config_path
 
 
 class TestMergeMcpServer:
@@ -92,6 +106,37 @@ class TestMergeMcpServer:
 
         assert merge_mcp_server(path, "/usr/local/bin/pls", ["mcp"])[0] is True
 
+    def test_preserves_fields_the_client_added_itself(self, tmp_path):
+        """Kiro writes `disabled`/`autoApprove` next to ours, and a re-run was resetting them."""
+        path = tmp_path / "mcp.json"
+        existing = {"command": "/old/pls", "args": ["mcp"], "disabled": False, "autoApprove": ["show"]}
+        path.write_text(json.dumps({"mcpServers": {"panel-live-server": existing}}), encoding="utf-8")
+
+        merge_mcp_server(path, "/new/pls", ["mcp"])
+
+        entry = json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["panel-live-server"]
+        assert entry["command"] == "/new/pls"
+        assert entry["disabled"] is False
+        assert entry["autoApprove"] == ["show"]
+
+    def test_preserving_client_fields_stays_idempotent(self, tmp_path):
+        path = tmp_path / "mcp.json"
+        existing = {"command": "/usr/local/bin/pls", "args": ["mcp"], "disabled": False, "autoApprove": []}
+        path.write_text(json.dumps({"mcpServers": {"panel-live-server": existing}}), encoding="utf-8")
+
+        assert merge_mcp_server(path, "/usr/local/bin/pls", ["mcp"])[0] is True
+
+    def test_does_not_clobber_an_extra_field_the_user_narrowed(self, tmp_path):
+        """`tools: ["*"]` is our default, not an override of a hand-picked list."""
+        path = tmp_path / "mcp-config.json"
+        existing = {"type": "local", "command": "/old/pls", "args": ["mcp"], "tools": ["show"]}
+        path.write_text(json.dumps({"mcpServers": {"panel-live-server": existing}}), encoding="utf-8")
+
+        merge_mcp_server(path, "/new/pls", ["mcp"], entry_type="local", extra_fields={"tools": ["*"]})
+
+        entry = json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["panel-live-server"]
+        assert entry["tools"] == ["show"]
+
     def test_preserves_top_level_keys_besides_mcp_servers(self, tmp_path):
         path = tmp_path / "claude_desktop_config.json"
         path.write_text(json.dumps({"mcpServers": {}, "globalShortcut": "Cmd+Shift+Space"}), encoding="utf-8")
@@ -142,6 +187,324 @@ class TestClientConfigShapes:
         """VS Code reads MCP config per project, so this must not resolve to $HOME."""
         assert vscode_config_path() == Path(".vscode/mcp.json")
         assert not vscode_config_path().is_absolute()
+
+    def test_extra_fields_are_added_to_the_entry(self, tmp_path):
+        """Copilot CLI needs a `tools` list alongside command/args."""
+        path = tmp_path / "mcp-config.json"
+
+        merge_mcp_server(path, "/usr/local/bin/pls", ["mcp"], entry_type="local", extra_fields={"tools": ["*"]})
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["panel-live-server"] == {
+            "type": "local",
+            "command": "/usr/local/bin/pls",
+            "args": ["mcp"],
+            "tools": ["*"],
+        }
+
+    def test_extra_fields_stay_idempotent(self, tmp_path):
+        path = tmp_path / "mcp-config.json"
+        merge_mcp_server(path, "/usr/local/bin/pls", ["mcp"], entry_type="local", extra_fields={"tools": ["*"]})
+
+        already_installed, _ = merge_mcp_server(path, "/usr/local/bin/pls", ["mcp"], entry_type="local", extra_fields={"tools": ["*"]})
+
+        assert already_installed is True
+
+
+class TestNewClientConfigPaths:
+    """Path resolution for the clients added alongside claude/cursor/vscode/claude-code."""
+
+    def test_windsurf(self):
+        assert str(windsurf_config_path()).endswith(".codeium/windsurf/mcp_config.json")
+
+    def test_jetbrains(self):
+        assert str(jetbrains_config_path()).endswith(".junie/mcp/mcp.json")
+
+    def test_gemini_cli(self):
+        assert str(gemini_cli_config_path()).endswith(".gemini/settings.json")
+
+    def test_antigravity_defaults_to_the_path_the_shipping_build_reads(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert str(antigravity_config_path()).endswith(".gemini/antigravity/mcp_config.json")
+
+    def test_antigravity_falls_back_to_the_documented_path_when_that_is_the_one_present(self, monkeypatch, tmp_path):
+        """The docs and the shipped app disagree, so an existing file decides."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        documented = tmp_path / ".gemini" / "config" / "mcp_config.json"
+        documented.parent.mkdir(parents=True)
+        documented.write_text("{}", encoding="utf-8")
+
+        assert antigravity_config_path() == documented
+
+    def test_antigravity_prefers_the_installed_path_when_both_exist(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        for sub in ("config", "antigravity"):
+            path = tmp_path / ".gemini" / sub / "mcp_config.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{}", encoding="utf-8")
+
+        assert str(antigravity_config_path()).endswith(".gemini/antigravity/mcp_config.json")
+
+    def test_kiro(self):
+        assert str(kiro_config_path()).endswith(".kiro/settings/mcp.json")
+
+    def test_kilo_code(self):
+        assert str(kilo_code_config_path()).endswith(".config/kilo/kilo.jsonc")
+
+    def test_codex(self, monkeypatch):
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+        assert str(codex_config_path()).endswith(".codex/config.toml")
+
+    def test_codex_honours_codex_home(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        assert codex_config_path() == tmp_path / "config.toml"
+
+    def test_mistral_vibe(self, monkeypatch):
+        monkeypatch.delenv("VIBE_HOME", raising=False)
+        assert str(mistral_vibe_config_path()).endswith(".vibe/config.toml")
+
+    def test_mistral_vibe_honours_vibe_home(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("VIBE_HOME", str(tmp_path))
+        assert mistral_vibe_config_path() == tmp_path / "config.toml"
+
+    def test_copilot_defaults_to_the_dotfile(self, monkeypatch):
+        monkeypatch.delenv("COPILOT_HOME", raising=False)
+        assert str(copilot_config_path()).endswith(".copilot/mcp-config.json")
+
+    def test_copilot_respects_copilot_home(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("COPILOT_HOME", str(tmp_path))
+        assert copilot_config_path() == tmp_path / "mcp-config.json"
+
+    @pytest.fixture(autouse=True)
+    def _no_cline_env(self, monkeypatch):
+        """Cline reads its location from the environment, so clear it before asserting defaults."""
+        for var in ("CLINE_MCP_SETTINGS_PATH", "CLINE_DATA_DIR", "CLINE_DIR"):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_cline_defaults_below_the_home_directory(self):
+        assert str(cline_config_path()).endswith(".cline/data/settings/cline_mcp_settings.json")
+
+    @pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+    def test_cline_does_not_branch_on_the_platform(self, monkeypatch, platform):
+        """Cline 4 shares one file across editors and OSes, unlike Claude Desktop."""
+        monkeypatch.setattr(sys, "platform", platform)
+        assert str(cline_config_path()).endswith(".cline/data/settings/cline_mcp_settings.json")
+
+    def test_cline_honours_an_explicit_settings_path(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLINE_MCP_SETTINGS_PATH", str(tmp_path / "custom.json"))
+        assert cline_config_path() == tmp_path / "custom.json"
+
+    def test_cline_honours_the_data_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLINE_DATA_DIR", str(tmp_path))
+        assert cline_config_path() == tmp_path / "settings" / "cline_mcp_settings.json"
+
+    def test_cline_honours_the_cline_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLINE_DIR", str(tmp_path))
+        assert cline_config_path() == tmp_path / "data" / "settings" / "cline_mcp_settings.json"
+
+
+class TestMergeKiloCodeServer:
+    """Kilo Code packs command+args into one array under a `mcp` key, not `mcpServers`."""
+
+    def test_writes_the_entry(self, tmp_path):
+        path = tmp_path / "kilo.jsonc"
+
+        already_installed, entry = merge_kilo_code_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert already_installed is False
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["mcp"]["panel-live-server"] == {
+            "type": "local",
+            "command": ["/usr/local/bin/pls", "mcp"],
+            "enabled": True,
+        }
+        assert entry == data["mcp"]["panel-live-server"]
+
+    def test_second_call_with_same_entry_is_a_noop(self, tmp_path):
+        path = tmp_path / "kilo.jsonc"
+        merge_kilo_code_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        already_installed, _ = merge_kilo_code_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert already_installed is True
+
+    def test_preserves_flags_the_existing_entry_passed(self, tmp_path):
+        path = tmp_path / "kilo.jsonc"
+        existing = {"type": "local", "command": ["/old/pls", "mcp", "--prompts", "/p.json"], "enabled": True}
+        path.write_text(json.dumps({"mcp": {"panel-live-server": existing}}), encoding="utf-8")
+
+        merge_kilo_code_server(path, "/new/pls", ["mcp"])
+
+        entry = json.loads(path.read_text(encoding="utf-8"))["mcp"]["panel-live-server"]
+        assert entry["command"] == ["/new/pls", "mcp", "--prompts", "/p.json"]
+
+    def test_invalid_json_raises_install_error(self, tmp_path):
+        path = tmp_path / "kilo.jsonc"
+        path.write_text("{not json", encoding="utf-8")
+
+        with pytest.raises(InstallError):
+            merge_kilo_code_server(path, "/usr/local/bin/pls", ["mcp"])
+
+
+class TestMergeCodexServer:
+    """Codex nests servers under [mcp_servers.<name>] in a config.toml."""
+
+    def test_writes_the_entry(self, tmp_path):
+        path = tmp_path / "config.toml"
+
+        already_installed, entry = merge_codex_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert already_installed is False
+        assert entry == {"command": "/usr/local/bin/pls", "args": ["mcp"]}
+        assert "[mcp_servers.panel-live-server]" in path.read_text(encoding="utf-8")
+
+    def test_preserves_other_toml_content(self, tmp_path):
+        path = tmp_path / "config.toml"
+        path.write_text('model = "gpt-5"\n\n[mcp_servers.other]\ncommand = "foo"\n', encoding="utf-8")
+
+        merge_codex_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        text = path.read_text(encoding="utf-8")
+        assert 'model = "gpt-5"' in text
+        assert "[mcp_servers.other]" in text
+        assert "[mcp_servers.panel-live-server]" in text
+
+    def test_second_call_with_same_entry_is_a_noop(self, tmp_path):
+        path = tmp_path / "config.toml"
+        merge_codex_server(path, "/usr/local/bin/pls", ["mcp"])
+        before = path.read_text(encoding="utf-8")
+
+        already_installed, _ = merge_codex_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert already_installed is True
+        assert path.read_text(encoding="utf-8") == before
+
+    def test_preserves_flags_the_existing_entry_passed(self, tmp_path):
+        path = tmp_path / "config.toml"
+        path.write_text('[mcp_servers.panel-live-server]\ncommand = "/old/pls"\nargs = ["mcp", "--prompts", "/p.json"]\n', encoding="utf-8")
+
+        merge_codex_server(path, "/new/pls", ["mcp"])
+
+        assert 'args = ["mcp", "--prompts", "/p.json"]' in path.read_text(encoding="utf-8")
+
+    def test_invalid_toml_raises_install_error(self, tmp_path):
+        path = tmp_path / "config.toml"
+        path.write_text("not [ valid toml", encoding="utf-8")
+
+        with pytest.raises(InstallError):
+            merge_codex_server(path, "/usr/local/bin/pls", ["mcp"])
+
+    def test_hyphenated_name_round_trips_through_a_strict_parser(self, tmp_path):
+        """`panel-live-server` is a bare key with hyphens, so check a real TOML reader accepts it."""
+        path = tmp_path / "config.toml"
+
+        merge_codex_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+        assert parsed["mcp_servers"]["panel-live-server"]["command"] == "/usr/local/bin/pls"
+
+    @pytest.mark.parametrize("existing", ["mcp_servers = []\n", "mcp_servers = {}\n", "mcp_servers = 42\n"])
+    def test_refuses_a_non_table_mcp_servers_without_touching_the_file(self, tmp_path, existing):
+        """Writing a sub-table into an array or inline table emits TOML that no longer parses."""
+        path = tmp_path / "config.toml"
+        path.write_text(existing, encoding="utf-8")
+
+        with pytest.raises(InstallError, match="not a table"):
+            merge_codex_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert path.read_text(encoding="utf-8") == existing
+
+
+class TestMergeMistralVibeServer:
+    """Vibe lists servers as [[mcp_servers]] array-of-tables, identified by name."""
+
+    def test_writes_the_entry(self, tmp_path):
+        path = tmp_path / "config.toml"
+
+        already_installed, entry = merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert already_installed is False
+        assert entry == {
+            "name": "panel-live-server",
+            "transport": "stdio",
+            "command": "/usr/local/bin/pls",
+            "args": ["mcp"],
+        }
+        assert "[[mcp_servers]]" in path.read_text(encoding="utf-8")
+
+    def test_preserves_other_entries_in_the_array(self, tmp_path):
+        path = tmp_path / "config.toml"
+        path.write_text('[[mcp_servers]]\nname = "git"\ntransport = "stdio"\ncommand = "uvx"\nargs = []\n', encoding="utf-8")
+
+        merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        text = path.read_text(encoding="utf-8")
+        assert 'name = "git"' in text
+        assert 'name = "panel-live-server"' in text
+
+    def test_second_call_with_same_entry_is_a_noop(self, tmp_path):
+        path = tmp_path / "config.toml"
+        merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        already_installed, _ = merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert already_installed is True
+
+    def test_updates_a_stale_entry_without_duplicating_it(self, tmp_path):
+        path = tmp_path / "config.toml"
+        merge_mistral_vibe_server(path, "/old/pls", ["mcp"])
+
+        merge_mistral_vibe_server(path, "/new/pls", ["mcp"])
+
+        text = path.read_text(encoding="utf-8")
+        assert text.count("[[mcp_servers]]") == 1
+        assert '"/new/pls"' in text
+
+    def test_invalid_toml_raises_install_error(self, tmp_path):
+        path = tmp_path / "config.toml"
+        path.write_text("not [ valid toml", encoding="utf-8")
+
+        with pytest.raises(InstallError):
+            merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+    def test_converts_the_empty_array_vibe_ships_by_default(self, tmp_path):
+        """`mcp_servers = []` is the same key in a different TOML shape, and appending a table to it wrote unparsable TOML."""
+        path = tmp_path / "config.toml"
+        path.write_text('model = "devstral"\nmcp_servers = []\n', encoding="utf-8")
+
+        merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+        assert parsed["mcp_servers"] == [{"name": "panel-live-server", "transport": "stdio", "command": "/usr/local/bin/pls", "args": ["mcp"]}]
+        assert parsed["model"] == "devstral"
+
+    def test_carries_across_servers_written_as_inline_tables(self, tmp_path):
+        """Converting the array form must not drop entries the user already had."""
+        path = tmp_path / "config.toml"
+        path.write_text('mcp_servers = [{name = "git", command = "uvx"}]\n', encoding="utf-8")
+
+        merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+        assert [s["name"] for s in parsed["mcp_servers"]] == ["git", "panel-live-server"]
+
+    @pytest.mark.parametrize("existing", ["mcp_servers = 42\n", "mcp_servers = [1, 2]\n"])
+    def test_refuses_a_junk_mcp_servers_without_touching_the_file(self, tmp_path, existing):
+        path = tmp_path / "config.toml"
+        path.write_text(existing, encoding="utf-8")
+
+        with pytest.raises(InstallError, match="not a list of servers"):
+            merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        assert path.read_text(encoding="utf-8") == existing
+
+    def test_written_file_parses_with_a_strict_parser(self, tmp_path):
+        path = tmp_path / "config.toml"
+
+        merge_mistral_vibe_server(path, "/usr/local/bin/pls", ["mcp"])
+
+        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+        assert parsed["mcp_servers"][0]["name"] == "panel-live-server"
 
 
 class TestResolvePlsCommand:

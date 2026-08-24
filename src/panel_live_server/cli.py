@@ -24,14 +24,29 @@ import typer
 from panel_live_server import __version__
 from panel_live_server.config import default_panel_port
 from panel_live_server.config import reset_config
-from panel_live_server.install import SERVER_NAME
-from panel_live_server.install import InstallError
-from panel_live_server.install import claude_desktop_config_path
-from panel_live_server.install import cursor_config_path
-from panel_live_server.install import merge_mcp_server
-from panel_live_server.install import register_with_claude_code
-from panel_live_server.install import resolve_pls_command
-from panel_live_server.install import vscode_config_path
+from panel_live_server.install import (
+    SERVER_NAME,
+    InstallError,
+    antigravity_config_path,
+    claude_desktop_config_path,
+    cline_config_path,
+    codex_config_path,
+    copilot_config_path,
+    cursor_config_path,
+    gemini_cli_config_path,
+    jetbrains_config_path,
+    kilo_code_config_path,
+    kiro_config_path,
+    merge_codex_server,
+    merge_kilo_code_server,
+    merge_mcp_server,
+    merge_mistral_vibe_server,
+    mistral_vibe_config_path,
+    register_with_claude_code,
+    resolve_pls_command,
+    vscode_config_path,
+    windsurf_config_path,
+)
 from panel_live_server.prompts import render_instructions
 from panel_live_server.screenshot import install_browser as _install_browser
 
@@ -325,6 +340,7 @@ def _register_in_json_config(
     servers_key: str,
     entry_type: str,
     restart_hint: str,
+    extra_fields: dict | None = None,
 ) -> None:
     """Shared body for the clients configured by a JSON file on disk."""
     try:
@@ -337,6 +353,7 @@ def _register_in_json_config(
             args,
             servers_key=servers_key,
             entry_type=entry_type,
+            extra_fields=extra_fields,
         )
     except InstallError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -443,6 +460,266 @@ def install_claude_code(
     typer.echo("Registered panel-live-server with Claude Code, via:")
     typer.echo("")
     typer.echo(f"  {ran}")
+
+
+@install_app.command(name="windsurf")
+def install_windsurf(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with the Windsurf editor.
+
+    Writes to `~/.codeium/windsurf/mcp_config.json`, leaving any other server
+    there untouched. To configure the Cascade plugin inside another IDE instead,
+    point this at its own file: `--config-path ~/.codeium/mcp_config.json`.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=windsurf_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Open the MCP servers panel (hammer icon) in Cascade and confirm panel-live-server is running.",
+    )
+
+
+@install_app.command(name="cline")
+def install_cline(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Cline.
+
+    Writes to `~/.cline/data/settings/cline_mcp_settings.json`, which Cline reads
+    from whichever editor it runs in. This is a separate file from the one the
+    `vscode` command writes, so running one does not configure the other.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=cline_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Open Cline's MCP Servers panel and confirm panel-live-server is connected.",
+    )
+
+
+@install_app.command(name="jetbrains")
+def install_jetbrains(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Junie.
+
+    Writes to `~/.junie/mcp/mcp.json`, which applies to every project opened in
+    the IDE. Add a `.junie/mcp/mcp.json` in a specific project instead if you
+    only want it there. JetBrains AI Assistant is a separate product configured
+    from Settings, Tools, AI Assistant, Model Context Protocol, not from a file.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=jetbrains_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Restart the IDE, or reopen Junie's MCP settings, for the change to take effect.",
+    )
+
+
+@install_app.command(name="gemini-cli")
+def install_gemini_cli(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with the Gemini CLI.
+
+    Writes to `~/.gemini/settings.json`, leaving every other setting there
+    (theme, auth, other servers) untouched.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=gemini_cli_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Restart the Gemini CLI for the change to take effect.",
+    )
+
+
+@install_app.command(name="antigravity")
+def install_antigravity(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Google Antigravity.
+
+    Writes to `~/.gemini/antigravity/mcp_config.json`, which is what the shipping
+    build reads, falling back to the `~/.gemini/config/mcp_config.json` the docs
+    describe when that is the file already present. Add an
+    `.agents/mcp_config.json` in a project instead if you only want it there.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=antigravity_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Open Manage MCP Servers in Antigravity and confirm panel-live-server is connected.",
+    )
+
+
+@install_app.command(name="kiro")
+def install_kiro(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Kiro.
+
+    Writes to `~/.kiro/settings/mcp.json`, which applies to every workspace.
+    Add a `.kiro/settings/mcp.json` in a specific project instead if you only
+    want it there.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=kiro_config_path,
+        servers_key="mcpServers",
+        entry_type="",
+        restart_hint="Reload Kiro, or open the MCP panel, for the change to take effect.",
+    )
+
+
+@install_app.command(name="copilot")
+def install_copilot(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with the GitHub Copilot CLI.
+
+    Writes to `~/.copilot/mcp-config.json` (or `$COPILOT_HOME/mcp-config.json`
+    if set). This is the standalone `copilot` CLI, not VS Code's Copilot Chat,
+    which already reads `.vscode/mcp.json` via the `vscode` command.
+    """
+    _register_in_json_config(
+        command=command,
+        prompts=prompts,
+        config_path=config_path,
+        default_path=copilot_config_path,
+        servers_key="mcpServers",
+        entry_type="local",
+        extra_fields={"tools": ["*"]},
+        restart_hint="Run `/mcp show` in the Copilot CLI to confirm panel-live-server is connected.",
+    )
+
+
+@install_app.command(name="kilo-code")
+def install_kilo_code(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Kilo Code.
+
+    Writes to `~/.config/kilo/kilo.jsonc`. Kilo Code packs the command and its
+    arguments into one array rather than separate `command`/`args` fields, so
+    the entry looks different from every other client here.
+    """
+    try:
+        pls_command = command or resolve_pls_command()
+        path = Path(config_path).expanduser() if config_path else kilo_code_config_path()
+        args = ["mcp", "--prompts", str(Path(prompts).expanduser())] if prompts else ["mcp"]
+        already_installed, entry = merge_kilo_code_server(path, pls_command, args)
+    except InstallError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    if already_installed:
+        typer.echo(f"{SERVER_NAME} is already registered in {path}")
+    else:
+        typer.echo(f"Registered {SERVER_NAME} in {path}")
+    typer.echo("")
+    typer.echo(json.dumps({"mcp": {SERVER_NAME: entry}}, indent=2))
+    typer.echo("")
+    typer.echo("Reload the window for the change to take effect.")
+
+
+@install_app.command(name="codex")
+def install_codex(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with the OpenAI Codex CLI.
+
+    Writes to `~/.codex/config.toml`, leaving every other setting and server
+    there untouched.
+    """
+    try:
+        pls_command = command or resolve_pls_command()
+        path = Path(config_path).expanduser() if config_path else codex_config_path()
+        args = ["mcp", "--prompts", str(Path(prompts).expanduser())] if prompts else ["mcp"]
+        already_installed, entry = merge_codex_server(path, pls_command, args)
+    except InstallError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    if already_installed:
+        typer.echo(f"{SERVER_NAME} is already registered in {path}")
+    else:
+        typer.echo(f"Registered {SERVER_NAME} in {path}")
+    typer.echo("")
+    typer.echo(f"[mcp_servers.{SERVER_NAME}]")
+    typer.echo(f'command = "{entry["command"]}"')
+    typer.echo(f"args = {json.dumps(entry['args'])}")
+    typer.echo("")
+    typer.echo("Restart the Codex CLI for the change to take effect.")
+
+
+@install_app.command(name="mistral-vibe")
+def install_mistral_vibe(
+    command: str = _COMMAND_OPTION,
+    prompts: str = _PROMPTS_OPTION,
+    config_path: str = _CONFIG_PATH_OPTION,
+) -> None:
+    """Register panel-live-server with Mistral Vibe.
+
+    Writes to `~/.vibe/config.toml`, leaving every other setting and server
+    there untouched.
+    """
+    try:
+        pls_command = command or resolve_pls_command()
+        path = Path(config_path).expanduser() if config_path else mistral_vibe_config_path()
+        args = ["mcp", "--prompts", str(Path(prompts).expanduser())] if prompts else ["mcp"]
+        already_installed, entry = merge_mistral_vibe_server(path, pls_command, args)
+    except InstallError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    if already_installed:
+        typer.echo(f"{SERVER_NAME} is already registered in {path}")
+    else:
+        typer.echo(f"Registered {SERVER_NAME} in {path}")
+    typer.echo("")
+    typer.echo("[[mcp_servers]]")
+    typer.echo(f'name = "{entry["name"]}"')
+    typer.echo(f'transport = "{entry["transport"]}"')
+    typer.echo(f'command = "{entry["command"]}"')
+    typer.echo(f"args = {json.dumps(entry['args'])}")
+    typer.echo("")
+    typer.echo("Restart Vibe for the change to take effect.")
 
 
 @app.command(name="install-browser")
